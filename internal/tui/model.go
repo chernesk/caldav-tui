@@ -4,11 +4,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -34,7 +36,21 @@ type row struct {
 	depth int
 }
 
+type mode int
+
+const (
+	modeList mode = iota
+	modeForm
+	modeConfirmDelete
+)
+
 type Model struct {
+	mode    mode
+	form    *form
+	confirm caldav.Task // task pending delete confirmation
+	flash   string      // one-line result of the last action, cleared on next key
+	busy    int         // writes in flight
+
 	cl *caldav.Client
 	st *store.Store
 
@@ -172,55 +188,192 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		if m.form != nil {
+			m.form.resize(m.w)
+		}
+		m.scroll()
+		return m, nil
 	case syncDone:
 		m.syncing = false
 		m.err = msg.err
 		m.reload()
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "j", "down":
-			m.move(1)
-		case "k", "up":
-			m.move(-1)
-		case "ctrl+d", "pgdown":
-			m.move(m.listHeight() / 2)
-		case "ctrl+u", "pgup":
-			m.move(-m.listHeight() / 2)
-		case "g", "home":
-			m.cursor = 0
-		case "G", "end":
-			m.cursor = max(0, len(m.rows)-1)
-		case "tab":
-			m.calIdx++
-			if m.calIdx >= len(m.cals) {
-				m.calIdx = -1
+		m.scroll()
+		return m, nil
+	case opMsg:
+		return m.opDone(msg)
+	}
+
+	switch m.mode {
+	case modeForm:
+		return m.updateForm(msg)
+	case modeConfirmDelete:
+		if km, ok := msg.(tea.KeyMsg); ok {
+			m.mode = modeList
+			if km.String() == "y" || km.String() == "Y" {
+				m.busy++
+				return m, m.remove(m.confirm)
 			}
-			m.cursor, m.offset = 0, 0
-			m.reload()
-		case "shift+tab":
-			m.calIdx--
-			if m.calIdx < -1 {
-				m.calIdx = len(m.cals) - 1
-			}
-			m.cursor, m.offset = 0, 0
-			m.reload()
-		case "c":
-			m.showDone = !m.showDone
-			m.reload()
-		case "s":
-			m.showFuture = !m.showFuture
-			m.reload()
-		case "r":
+		}
+		return m, nil
+	}
+
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	m.flash = ""
+	switch km.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		m.move(1)
+	case "k", "up":
+		m.move(-1)
+	case "ctrl+d", "pgdown":
+		m.move(m.listHeight() / 2)
+	case "ctrl+u", "pgup":
+		m.move(-m.listHeight() / 2)
+	case "g", "home":
+		m.cursor = 0
+	case "G", "end":
+		m.cursor = max(0, len(m.rows)-1)
+	case "tab":
+		m.calIdx++
+		if m.calIdx >= len(m.cals) {
+			m.calIdx = -1
+		}
+		m.cursor, m.offset = 0, 0
+		m.reload()
+	case "shift+tab":
+		m.calIdx--
+		if m.calIdx < -1 {
+			m.calIdx = len(m.cals) - 1
+		}
+		m.cursor, m.offset = 0, 0
+		m.reload()
+	case "c":
+		m.showDone = !m.showDone
+		m.reload()
+	case "s":
+		m.showFuture = !m.showFuture
+		m.reload()
+	case "r":
+		if !m.syncing {
+			m.syncing = true
+			return m, m.sync()
+		}
+	case "x", " ":
+		if t, ok := m.current(); ok {
+			m.busy++
+			return m, m.toggleDone(t)
+		}
+	case "a":
+		if cal := m.targetCalendar(); cal != "" {
+			m.form = newForm(nil, "", "", cal, m.w)
+			m.mode = modeForm
+			return m, textinput.Blink
+		}
+		m.err = errors.New("no task calendar yet; sync first")
+	case "A":
+		if t, ok := m.current(); ok {
+			m.form = newForm(nil, t.UID, t.Summary, t.Calendar, m.w)
+			m.mode = modeForm
+			return m, textinput.Blink
+		}
+	case "e", "enter":
+		if t, ok := m.current(); ok {
+			m.form = newForm(&t, "", "", t.Calendar, m.w)
+			m.mode = modeForm
+			return m, textinput.Blink
+		}
+	case "d":
+		if t, ok := m.current(); ok {
+			m.confirm = t
+			m.mode = modeConfirmDelete
+		}
+	}
+	m.scroll()
+	return m, nil
+}
+
+func (m Model) current() (caldav.Task, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return caldav.Task{}, false
+	}
+	return m.rows[m.cursor].task, true
+}
+
+// targetCalendar picks where a new task goes: the selected tab, else the
+// selected task's calendar, else the first task calendar.
+func (m Model) targetCalendar() string {
+	if m.calIdx >= 0 && m.calIdx < len(m.cals) {
+		return m.cals[m.calIdx].Path
+	}
+	if t, ok := m.current(); ok {
+		return t.Calendar
+	}
+	if len(m.cals) > 0 {
+		return m.cals[0].Path
+	}
+	return ""
+}
+
+func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	act, cmd := m.form.update(msg)
+	switch act {
+	case formCancel:
+		m.mode, m.form = modeList, nil
+	case formSubmit:
+		e, err := m.form.edit(time.Now())
+		if err != nil {
+			m.form.err = err.Error()
+			return m, cmd
+		}
+		f := m.form
+		m.mode, m.form = modeList, nil
+		if f.task != nil && e == (caldav.Edit{}) {
+			return m, nil // nothing changed
+		}
+		m.busy++
+		return m, m.save(f, e)
+	}
+	return m, cmd
+}
+
+func (m Model) opDone(msg opMsg) (tea.Model, tea.Cmd) {
+	m.busy = max(0, m.busy-1)
+	if msg.err != nil {
+		m.err = msg.err
+		if msg.conflict {
+			m.err = errors.New("changed on the server since last sync; refreshing — try again")
 			if !m.syncing {
 				m.syncing = true
 				return m, m.sync()
 			}
 		}
+		return m, nil
+	}
+	m.err = nil
+	m.flash = msg.status
+	if msg.task != nil && notStarted(*msg.task) && !m.showFuture {
+		m.flash += " (hidden until start date; s shows)"
+	}
+	m.reload()
+	if msg.task != nil {
+		m.selectUID(msg.task.UID)
 	}
 	m.scroll()
 	return m, nil
+}
+
+// selectUID moves the cursor to a task if it's visible.
+func (m *Model) selectUID(uid string) {
+	for i, r := range m.rows {
+		if r.task.UID == uid {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *Model) move(d int) {
@@ -247,6 +400,9 @@ const detailLines = 5
 func (m Model) View() string {
 	if m.w == 0 {
 		return ""
+	}
+	if m.mode == modeForm && m.form != nil {
+		return m.form.view(time.Now())
 	}
 	var b strings.Builder
 
@@ -305,8 +461,18 @@ func (m Model) View() string {
 	} else if m.hidden > 0 {
 		status += fmt.Sprintf(" · %d unstarted hidden", m.hidden)
 	}
-	keys := "j/k move · tab cal · c done · s unstarted · r sync · q quit"
-	b.WriteString(dim.Render(status + "  |  " + keys))
+	if m.busy > 0 {
+		status += " · saving…"
+	}
+	keys := "x done · a add · e edit · d del · s unstarted · q quit"
+	switch {
+	case m.mode == modeConfirmDelete:
+		b.WriteString(errStyle.Render(truncate("Delete “"+m.confirm.Summary+"”? (y/N)", m.w)))
+	case m.flash != "":
+		b.WriteString(today.Render(truncate(m.flash, m.w)))
+	default:
+		b.WriteString(dim.Render(truncate(status+"  |  "+keys, m.w)))
+	}
 	// Always reserve the error line, and end without a newline, so the view is
 	// exactly m.h lines and the header never scrolls off the top.
 	b.WriteString("\n")

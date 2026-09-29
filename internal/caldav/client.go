@@ -15,7 +15,11 @@ import (
 )
 
 type Client struct {
-	c *wcaldav.Client
+	c    *wcaldav.Client
+	base *url.URL // resolved endpoint; hrefs are resolved against it
+	user string
+	pass string
+	hc   *http.Client
 }
 
 type Calendar struct {
@@ -55,11 +59,16 @@ func resolveEndpoint(server string) string {
 
 func New(server, user, pass string) (*Client, error) {
 	hc := webdav.HTTPClientWithBasicAuth(http.DefaultClient, user, pass)
-	c, err := wcaldav.NewClient(hc, resolveEndpoint(server))
+	endpoint := resolveEndpoint(server)
+	c, err := wcaldav.NewClient(hc, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{c: c}, nil
+	base, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{c: c, base: base, user: user, pass: pass, hc: http.DefaultClient}, nil
 }
 
 // Calendars discovers all calendars that support VTODO.

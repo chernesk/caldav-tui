@@ -3,6 +3,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/chernesk/caldav-tui/internal/caldav"
@@ -10,6 +11,8 @@ import (
 )
 
 type Store struct{ db *sql.DB }
+
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS calendars (
@@ -28,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	due        INTEGER,          -- unix seconds
 	due_all_day INTEGER NOT NULL,
 	start      INTEGER,
+	start_all_day INTEGER NOT NULL DEFAULT 0,
 	completed  INTEGER,
 	rrule      TEXT NOT NULL,
 	parent     TEXT NOT NULL,
@@ -42,7 +46,20 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The cache is disposable: on a schema bump, drop it and let the next sync refill it.
+	var ver int
+	_ = db.QueryRow(`PRAGMA user_version`).Scan(&ver)
+	if ver < schemaVersion {
+		if _, err := db.Exec(`DROP TABLE IF EXISTS tasks; DROP TABLE IF EXISTS calendars; DROP TABLE IF EXISTS meta;`); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, schemaVersion)); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -79,19 +96,38 @@ func (s *Store) ReplaceCalendar(cal caldav.Calendar, tasks []caldav.Task) error 
 		return err
 	}
 	for _, t := range tasks {
-		if _, err := tx.Exec(`INSERT INTO tasks
-			(href,calendar,etag,uid,summary,notes,status,priority,due,due_all_day,start,completed,rrule,parent,raw)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(href) DO UPDATE SET calendar=excluded.calendar, etag=excluded.etag, uid=excluded.uid,
-			summary=excluded.summary, notes=excluded.notes, status=excluded.status, priority=excluded.priority,
-			due=excluded.due, due_all_day=excluded.due_all_day, start=excluded.start, completed=excluded.completed,
-			rrule=excluded.rrule, parent=excluded.parent, raw=excluded.raw`,
-			t.Href, cal.Path, t.ETag, t.UID, t.Summary, t.Notes, t.Status, t.Priority,
-			unix(t.Due), b2i(t.DueAllDay), unix(t.Start), unix(t.Completed), t.RRule, t.Parent, t.Raw); err != nil {
+		t.Calendar = cal.Path
+		if err := upsert(tx, t); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func upsert(e execer, t caldav.Task) error {
+	_, err := e.Exec(`INSERT INTO tasks
+		(href,calendar,etag,uid,summary,notes,status,priority,due,due_all_day,start,start_all_day,completed,rrule,parent,raw)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(href) DO UPDATE SET calendar=excluded.calendar, etag=excluded.etag, uid=excluded.uid,
+		summary=excluded.summary, notes=excluded.notes, status=excluded.status, priority=excluded.priority,
+		due=excluded.due, due_all_day=excluded.due_all_day, start=excluded.start, start_all_day=excluded.start_all_day, completed=excluded.completed,
+		rrule=excluded.rrule, parent=excluded.parent, raw=excluded.raw`,
+		t.Href, t.Calendar, t.ETag, t.UID, t.Summary, t.Notes, t.Status, t.Priority,
+		unix(t.Due), b2i(t.DueAllDay), unix(t.Start), b2i(t.StartAllDay), unix(t.Completed), t.RRule, t.Parent, t.Raw)
+	return err
+}
+
+// UpsertTask inserts or updates one task (used after a successful write).
+func (s *Store) UpsertTask(t caldav.Task) error { return upsert(s.db, t) }
+
+// DeleteTask removes one task from the cache.
+func (s *Store) DeleteTask(href string) error {
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE href=?`, href)
+	return err
 }
 
 // PruneCalendars drops calendars (and their tasks) no longer on the server.
@@ -151,7 +187,7 @@ func (s *Store) Calendars() ([]caldav.Calendar, error) {
 
 // Tasks returns cached tasks; calendar "" means all.
 func (s *Store) Tasks(calendar string) ([]caldav.Task, error) {
-	q := `SELECT href,calendar,etag,uid,summary,notes,status,priority,due,due_all_day,start,completed,rrule,parent,raw FROM tasks`
+	q := `SELECT href,calendar,etag,uid,summary,notes,status,priority,due,due_all_day,start,start_all_day,completed,rrule,parent,raw FROM tasks`
 	var args []any
 	if calendar != "" {
 		q += ` WHERE calendar=?`
@@ -166,13 +202,13 @@ func (s *Store) Tasks(calendar string) ([]caldav.Task, error) {
 	for rows.Next() {
 		var t caldav.Task
 		var due, start, comp sql.NullInt64
-		var allDay int
+		var allDay, startAllDay int
 		if err := rows.Scan(&t.Href, &t.Calendar, &t.ETag, &t.UID, &t.Summary, &t.Notes, &t.Status, &t.Priority,
-			&due, &allDay, &start, &comp, &t.RRule, &t.Parent, &t.Raw); err != nil {
+			&due, &allDay, &start, &startAllDay, &comp, &t.RRule, &t.Parent, &t.Raw); err != nil {
 			return nil, err
 		}
 		t.Due, t.Start, t.Completed = fromUnix(due), fromUnix(start), fromUnix(comp)
-		t.DueAllDay = allDay != 0
+		t.DueAllDay, t.StartAllDay = allDay != 0, startAllDay != 0
 		out = append(out, t)
 	}
 	return out, rows.Err()

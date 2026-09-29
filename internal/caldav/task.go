@@ -11,21 +11,22 @@ import (
 // Task is the subset of a VTODO the UI cares about. Raw keeps the original
 // iCalendar text so later writes can patch only the properties we manage.
 type Task struct {
-	Href      string
-	ETag      string
-	Calendar  string // calendar path
-	UID       string
-	Summary   string
-	Notes     string
-	Status    string
-	Priority  int // 0 = none, 1 = highest .. 9 = lowest
-	Due       time.Time
-	DueAllDay bool
-	Start     time.Time
-	Completed time.Time
-	RRule     string
-	Parent    string // UID from RELATED-TO (default/PARENT reltype)
-	Raw       string
+	Href        string
+	ETag        string
+	Calendar    string // calendar path
+	UID         string
+	Summary     string
+	Notes       string
+	Status      string
+	Priority    int // 0 = none, 1 = highest .. 9 = lowest
+	Due         time.Time
+	DueAllDay   bool
+	Start       time.Time
+	StartAllDay bool
+	Completed   time.Time
+	RRule       string
+	Parent      string // UID from RELATED-TO (default/PARENT reltype)
+	Raw         string
 }
 
 func (t Task) Done() bool { return t.Status == "COMPLETED" || t.Status == "CANCELLED" }
@@ -51,10 +52,11 @@ func ParseTask(href, etag, calendar string, cal *ical.Calendar) (Task, bool) {
 		}
 		if pr := p.Get(ical.PropDue); pr != nil {
 			t.Due, _ = pr.DateTime(time.Local)
-			t.DueAllDay = pr.ValueType() == ical.ValueDate
+			t.DueAllDay = allDay(pr)
 		}
 		if pr := p.Get(ical.PropDateTimeStart); pr != nil {
 			t.Start, _ = pr.DateTime(time.Local)
+			t.StartAllDay = allDay(pr)
 		}
 		if pr := p.Get(ical.PropCompleted); pr != nil {
 			t.Completed, _ = pr.DateTime(time.Local)
@@ -74,4 +76,10 @@ func ParseTask(href, etag, calendar string, cal *ical.Calendar) (Task, bool) {
 		return t, true
 	}
 	return Task{}, false
+}
+
+// allDay reports whether a DUE/DTSTART value is a date rather than a date-time.
+// Some clients omit VALUE=DATE, so fall back to the value's shape.
+func allDay(p *ical.Prop) bool {
+	return p.ValueType() == ical.ValueDate || len(p.Value) == 8
 }
