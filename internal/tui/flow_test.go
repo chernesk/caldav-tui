@@ -2,12 +2,9 @@ package tui
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,69 +12,20 @@ import (
 
 	"github.com/chernesk/caldav-tui/internal/caldav"
 	"github.com/chernesk/caldav-tui/internal/store"
+	"github.com/chernesk/caldav-tui/internal/testdav"
 )
-
-// fakeDAV is an in-memory object store speaking just the write half of CalDAV.
-type fakeDAV struct {
-	mu   sync.Mutex
-	objs map[string]string
-	gen  map[string]int
-}
-
-func (f *fakeDAV) etag(p string) string { return `"` + string(rune('a'+f.gen[p])) + `"` }
-
-func (f *fakeDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	_, exists := f.objs[r.URL.Path]
-	switch r.Method {
-	case "PUT":
-		if r.Header.Get("If-None-Match") == "*" && exists {
-			w.WriteHeader(412)
-			return
-		}
-		if m := r.Header.Get("If-Match"); m != "" && (!exists || m != f.etag(r.URL.Path)) {
-			w.WriteHeader(412)
-			return
-		}
-		b, _ := io.ReadAll(r.Body)
-		f.objs[r.URL.Path] = string(b)
-		f.gen[r.URL.Path]++
-		w.Header().Set("ETag", f.etag(r.URL.Path))
-		w.WriteHeader(201)
-	case "DELETE":
-		if !exists {
-			w.WriteHeader(404)
-			return
-		}
-		if m := r.Header.Get("If-Match"); m != "" && m != f.etag(r.URL.Path) {
-			w.WriteHeader(412)
-			return
-		}
-		delete(f.objs, r.URL.Path)
-		w.WriteHeader(204)
-	case "HEAD":
-		if !exists {
-			w.WriteHeader(404)
-			return
-		}
-		w.Header().Set("ETag", f.etag(r.URL.Path))
-	default:
-		w.WriteHeader(405)
-	}
-}
 
 type rig struct {
 	t   *testing.T
 	m   Model
-	srv *fakeDAV
+	srv *testdav.Server
 	st  *store.Store
 }
 
 const calPath = "/dav/cal/"
 
 func newRig(t *testing.T) *rig {
-	f := &fakeDAV{objs: map[string]string{}, gen: map[string]int{}}
+	f := testdav.New()
 	ts := httptest.NewServer(f)
 	t.Cleanup(ts.Close)
 	cl, err := caldav.New(ts.URL+"/dav/", "u", "p")
@@ -157,9 +105,7 @@ func (r *rig) key(s string) {
 }
 
 func (r *rig) server(uid string) string {
-	r.srv.mu.Lock()
-	defer r.srv.mu.Unlock()
-	return r.srv.objs[calPath+uid+".ics"]
+	return r.srv.Get(calPath + uid + ".ics")
 }
 
 func (r *rig) cached(uid string) (caldav.Task, bool) {
@@ -282,11 +228,11 @@ func TestFlowAddEditDelete(t *testing.T) {
 	}
 
 	// edit with no changes writes nothing
-	gen := r.srv.gen[calPath+tk.UID+".ics"]
+	gen := r.srv.Gen(calPath + tk.UID + ".ics")
 	r.cursorOn(tk.UID)
 	r.key("e")
 	r.key("ctrl+s")
-	if r.srv.gen[calPath+tk.UID+".ics"] != gen {
+	if r.srv.Gen(calPath+tk.UID+".ics") != gen {
 		t.Error("no-op edit hit the server")
 	}
 
@@ -345,9 +291,7 @@ func TestFlowConflictTriggersSync(t *testing.T) {
 	r.m.syncing = false // New() starts mid-sync; pretend the startup sync finished
 
 	// someone else changes it on the server, bumping the ETag
-	r.srv.mu.Lock()
-	r.srv.gen[calPath+"racy.ics"]++
-	r.srv.mu.Unlock()
+	r.srv.Bump(calPath + "racy.ics")
 
 	next, cmd := r.m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	r.m = next.(Model)

@@ -32,6 +32,23 @@ Form: tab/shift-tab or up/down between fields · enter or ctrl-s save · esc can
 `today`, `tomorrow 2pm`, `fri`, `+3d`, `oct 5`, `2026-10-05 14:30`; repeat takes `daily`,
 `weekly mon,wed`, `every 2 weeks`, `monthly`, `weekdays`, or a raw `FREQ=...` rule.
 
+## Reminders
+
+While the TUI is open it shows native desktop notifications (KDE, GNOME, ... via D-Bus) with **Complete**
+and **Postpone** buttons, like the Chrome extension:
+
+- a timed task reminds at its due time; an all-day task reminds at `default_time` (09:00) on its due day
+- each reminder fires once, remembered across restarts; a recurring task re-arms when it advances
+- reminders you missed while the TUI was closed fire when you open it, if they're less than 12 hours old
+- tasks that haven't started yet, or are complete, never remind
+- the TUI also syncs in the background every 15 minutes so reminders stay current
+
+Optional config (all keys have defaults):
+
+    "notify": { "enabled": true, "default_time": "09:00", "sync_minutes": 15, "snooze_minutes": 60 }
+
+`./caldav-tui notify-test` pops up a test notification so you can check your desktop and the buttons.
+
 ## How writes work
 
 Every write is a conditional PUT/DELETE (`If-Match` with the task's ETag), built by patching only the
@@ -42,5 +59,5 @@ a lost update.
 
 ## Status
 
-Read, complete/reopen, add, subtask, edit and delete work. Next: quick-add with natural language in
+Read, complete/reopen, add, subtask, edit, delete and reminders work. Next: quick-add with natural language in
 the title, sync-token incremental sync, offline write queue.

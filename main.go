@@ -10,6 +10,7 @@ import (
 
 	"github.com/chernesk/caldav-tui/internal/caldav"
 	"github.com/chernesk/caldav-tui/internal/config"
+	"github.com/chernesk/caldav-tui/internal/notify"
 	"github.com/chernesk/caldav-tui/internal/store"
 	"github.com/chernesk/caldav-tui/internal/tui"
 )
@@ -21,7 +22,45 @@ func main() {
 	}
 }
 
+// notifyTest pops up one notification with the reminder buttons and waits for a click.
+func notifyTest() error {
+	n, err := notify.New()
+	if err != nil {
+		return fmt.Errorf("no desktop notification service: %w", err)
+	}
+	defer n.Shutdown()
+	id, err := n.Send("caldav-tui test", "If you can see this, reminders will work. Try a button.",
+		[]notify.Action{{Key: "complete", Label: "Complete"}, {Key: "snooze", Label: "Postpone 1h"}})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("sent notification %d; waiting 20s for a click...\n", id)
+	timeout := time.After(20 * time.Second)
+	for {
+		select {
+		case ev := <-n.Events():
+			if ev.ID != id {
+				continue
+			}
+			if ev.Closed {
+				fmt.Println("notification closed/dismissed")
+				return nil
+			}
+			fmt.Printf("button clicked: %s\n", ev.Action)
+			n.Close(id)
+			return nil
+		case <-timeout:
+			n.Close(id)
+			fmt.Println("no click (sending worked; buttons untested)")
+			return nil
+		}
+	}
+}
+
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "notify-test" {
+		return notifyTest()
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -59,6 +98,20 @@ func run() error {
 		return nil
 	}
 
-	_, err = tea.NewProgram(tui.New(cl, st), tea.WithAltScreen()).Run()
+	model := tui.New(cl, st)
+	if cfg.Notify.On() {
+		if n, err := notify.New(); err != nil {
+			fmt.Fprintf(os.Stderr, "reminders off: no desktop notification service (%v)\n", err)
+		} else {
+			defer n.Shutdown()
+			clock, _ := time.Parse("15:04", cfg.Notify.DefaultTime)
+			model = model.WithReminders(n, tui.ReminderConfig{
+				DefaultClock: time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute,
+				SyncEvery:    time.Duration(cfg.Notify.SyncMinutes) * time.Minute,
+				Snooze:       time.Duration(cfg.Notify.SnoozeMinutes) * time.Minute,
+			})
+		}
+	}
+	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return err
 }

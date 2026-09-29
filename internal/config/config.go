@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -16,7 +17,18 @@ type Config struct {
 	Username    string `json:"username"`
 	Password    string `json:"password,omitempty"`
 	PasswordCmd string `json:"password_cmd,omitempty"` // e.g. "pass show fastmail/caldav"
+	Notify      Notify `json:"notify"`
 }
+
+// Notify controls reminders, which fire while the TUI is open.
+type Notify struct {
+	Enabled       *bool  `json:"enabled,omitempty"`        // default true
+	DefaultTime   string `json:"default_time,omitempty"`   // "09:00": when all-day tasks remind
+	SyncMinutes   int    `json:"sync_minutes,omitempty"`   // background sync while open; default 15
+	SnoozeMinutes int    `json:"snooze_minutes,omitempty"` // Postpone button; default 60
+}
+
+func (n Notify) On() bool { return n.Enabled == nil || *n.Enabled }
 
 func Dir() (string, error) {
 	d, err := os.UserConfigDir()
@@ -64,6 +76,18 @@ func Load() (*Config, error) {
 	}
 	if c.Server == "" {
 		c.Server = "https://caldav.fastmail.com"
+	}
+	if c.Notify.DefaultTime == "" {
+		c.Notify.DefaultTime = "09:00"
+	}
+	if _, err := time.Parse("15:04", c.Notify.DefaultTime); err != nil {
+		return nil, fmt.Errorf("%s: notify.default_time must look like 09:00", p)
+	}
+	if c.Notify.SyncMinutes <= 0 {
+		c.Notify.SyncMinutes = 15
+	}
+	if c.Notify.SnoozeMinutes <= 0 {
+		c.Notify.SnoozeMinutes = 60
 	}
 	if c.Username == "" {
 		return nil, fmt.Errorf("%s: username is required", p)

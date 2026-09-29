@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chernesk/caldav-tui/internal/caldav"
+	"github.com/chernesk/caldav-tui/internal/notify"
 	"github.com/chernesk/caldav-tui/internal/store"
 )
 
@@ -51,6 +52,10 @@ type Model struct {
 	flash   string      // one-line result of the last action, cleared on next key
 	busy    int         // writes in flight
 
+	notifier Notifier // nil = reminders off
+	rem      ReminderConfig
+	notifIDs map[uint32]string // open notification id -> task href
+
 	cl *caldav.Client
 	st *store.Store
 
@@ -86,7 +91,13 @@ func (m Model) sync() tea.Cmd {
 	}
 }
 
-func (m Model) Init() tea.Cmd { return m.sync() }
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.sync()}
+	if m.notifier != nil {
+		cmds = append(cmds, m.tickReminders(), m.tickSync(), m.waitNotify())
+	}
+	return tea.Batch(cmds...)
+}
 
 func (m *Model) reload() {
 	m.cals, _ = m.st.Calendars()
@@ -198,7 +209,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.reload()
 		m.scroll()
+		m.checkReminders(time.Now()) // fresh data: catch anything that just became due
 		return m, nil
+	case reminderTickMsg:
+		m.checkReminders(time.Now())
+		return m, m.tickReminders()
+	case syncTickMsg:
+		if m.syncing {
+			return m, m.tickSync()
+		}
+		m.syncing = true
+		return m, tea.Batch(m.sync(), m.tickSync())
+	case notifyEventMsg:
+		return m.handleNotify(notify.Event(msg))
 	case opMsg:
 		return m.opDone(msg)
 	}

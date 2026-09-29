@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS tasks_calendar ON tasks(calendar);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Reminder state survives restarts (and schema bumps: the drop above skips these).
+CREATE TABLE IF NOT EXISTS notified (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS snoozes (uid TEXT PRIMARY KEY, until INTEGER NOT NULL);
 `
 
 func Open(path string) (*Store, error) {
@@ -212,6 +215,51 @@ func (s *Store) Tasks(calendar string) ([]caldav.Task, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// WasNotified reports whether a reminder key has already been shown.
+func (s *Store) WasNotified(key string) bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM notified WHERE key=?`, key).Scan(&n)
+	return n > 0
+}
+
+// MarkNotified records a shown reminder and forgets ones older than 30 days.
+func (s *Store) MarkNotified(key string, at time.Time) error {
+	if _, err := s.db.Exec(`INSERT OR REPLACE INTO notified(key,at) VALUES(?,?)`, key, at.Unix()); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM notified WHERE at < ?`, at.AddDate(0, 0, -30).Unix())
+	return err
+}
+
+// Snooze delays the next reminder for a task until the given time.
+func (s *Store) Snooze(uid string, until time.Time) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO snoozes(uid,until) VALUES(?,?)`, uid, until.Unix())
+	return err
+}
+
+func (s *Store) ClearSnooze(uid string) error {
+	_, err := s.db.Exec(`DELETE FROM snoozes WHERE uid=?`, uid)
+	return err
+}
+
+// Snoozes returns uid -> wake-up time for every snoozed task.
+func (s *Store) Snoozes() map[string]time.Time {
+	out := map[string]time.Time{}
+	rows, err := s.db.Query(`SELECT uid,until FROM snoozes`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uid string
+		var u int64
+		if rows.Scan(&uid, &u) == nil {
+			out[uid] = time.Unix(u, 0)
+		}
+	}
+	return out
 }
 
 func (s *Store) SetMeta(k, v string) error {

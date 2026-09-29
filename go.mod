@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/teambition/rrule-go v1.8.2
 	modernc.org/sqlite v1.60.0
 )

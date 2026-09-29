@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/chernesk/caldav-tui/internal/caldav"
-	"github.com/chernesk/caldav-tui/internal/store"
+	"github.com/chernesk/caldav-tui/internal/ops"
 )
 
 // opMsg is the result of a write. On success the cache has already been
@@ -35,43 +35,6 @@ func fail(err error) opMsg {
 	return opMsg{err: err, conflict: errors.Is(err, caldav.ErrConflict)}
 }
 
-// etagOf returns the cached ETag, or asks the server when the cache has none,
-// so a write is always conditional on a known version.
-func etagOf(ctx context.Context, cl *caldav.Client, t caldav.Task) (string, error) {
-	if t.ETag != "" {
-		return t.ETag, nil
-	}
-	e, err := cl.ETag(ctx, t.Href)
-	if err != nil {
-		return "", err
-	}
-	if e == "" {
-		return "", errors.New("server returned no ETag; sync and try again")
-	}
-	return e, nil
-}
-
-// put writes raw over an existing task and refreshes the cache from what we wrote.
-func put(ctx context.Context, cl *caldav.Client, st *store.Store, t caldav.Task, raw string) (caldav.Task, error) {
-	etag, err := etagOf(ctx, cl, t)
-	if err != nil {
-		return t, err
-	}
-	newTag, err := cl.Put(ctx, t.Href, raw, etag)
-	if err != nil {
-		return t, err
-	}
-	return cache(st, t.Href, newTag, t.Calendar, raw)
-}
-
-func cache(st *store.Store, href, etag, calendar, raw string) (caldav.Task, error) {
-	nt, err := caldav.TaskFromRaw(href, etag, calendar, raw)
-	if err != nil {
-		return nt, err
-	}
-	return nt, st.UpsertTask(nt)
-}
-
 func run(f func(ctx context.Context) opMsg) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -84,30 +47,18 @@ func run(f func(ctx context.Context) opMsg) tea.Cmd {
 func (m Model) toggleDone(t caldav.Task) tea.Cmd {
 	cl, st := m.cl, m.st
 	return run(func(ctx context.Context) opMsg {
-		now := time.Now()
-		var raw, status string
-		var err error
+		nt, out, err := ops.ToggleDone(ctx, cl, st, t, time.Now())
+		if err != nil {
+			return fail(err)
+		}
+		status := "completed"
 		switch {
-		case t.Done():
-			raw, err = caldav.SetDone(t.Raw, false, now)
+		case out == ops.Reopened:
 			status = "reopened"
-		default:
-			var res caldav.CompleteResult
-			raw, res, err = caldav.Complete(t.Raw, now)
-			status = "completed"
-			if res == caldav.Advanced {
-				status = "done — repeats"
-			}
-		}
-		if err != nil {
-			return fail(err)
-		}
-		nt, err := put(ctx, cl, st, t, raw)
-		if err != nil {
-			return fail(err)
-		}
-		if status == "done — repeats" && !nt.Due.IsZero() {
+		case out == ops.Advanced && !nt.Due.IsZero():
 			status = "done — next due " + dueLabel(nt)
+		case out == ops.Advanced:
+			status = "done — repeats"
 		}
 		return opMsg{task: &nt, status: status}
 	})
@@ -125,7 +76,7 @@ func (m Model) save(f *form, e caldav.Edit) tea.Cmd {
 			if err != nil {
 				return fail(err)
 			}
-			nt, err := put(ctx, cl, st, *existing, raw)
+			nt, err := ops.Put(ctx, cl, st, *existing, raw)
 			if err != nil {
 				return fail(err)
 			}
@@ -141,7 +92,7 @@ func (m Model) save(f *form, e caldav.Edit) tea.Cmd {
 		if err != nil {
 			return fail(err)
 		}
-		nt, err := cache(st, href, etag, calendar, raw)
+		nt, err := ops.Cache(st, href, etag, calendar, raw)
 		if err != nil {
 			return fail(err)
 		}
@@ -152,7 +103,7 @@ func (m Model) save(f *form, e caldav.Edit) tea.Cmd {
 func (m Model) remove(t caldav.Task) tea.Cmd {
 	cl, st := m.cl, m.st
 	return run(func(ctx context.Context) opMsg {
-		etag, err := etagOf(ctx, cl, t)
+		etag, err := ops.ETagOf(ctx, cl, t)
 		if err != nil {
 			return fail(err)
 		}
