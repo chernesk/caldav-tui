@@ -12,12 +12,13 @@ import (
 
 type Store struct{ db *sql.DB }
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS calendars (
 	path TEXT PRIMARY KEY,
-	name TEXT NOT NULL
+	name TEXT NOT NULL,
+	sync_token TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS tasks (
 	href       TEXT PRIMARY KEY,
@@ -131,6 +132,58 @@ func (s *Store) UpsertTask(t caldav.Task) error { return upsert(s.db, t) }
 func (s *Store) DeleteTask(href string) error {
 	_, err := s.db.Exec(`DELETE FROM tasks WHERE href=?`, href)
 	return err
+}
+
+// SyncToken returns the stored RFC 6578 sync token for a calendar ("" if none).
+func (s *Store) SyncToken(calendar string) string {
+	var v string
+	_ = s.db.QueryRow(`SELECT sync_token FROM calendars WHERE path=?`, calendar).Scan(&v)
+	return v
+}
+
+// ETags maps href -> ETag for everything cached in a calendar.
+func (s *Store) ETags(calendar string) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT href,etag FROM tasks WHERE calendar=?`, calendar)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var h, e string
+		if err := rows.Scan(&h, &e); err != nil {
+			return nil, err
+		}
+		out[h] = e
+	}
+	return out, rows.Err()
+}
+
+// ApplyDelta applies an incremental sync in one transaction: upsert changed
+// tasks, delete removed ones, and record the new token. The token only moves
+// forward together with the data it describes.
+func (s *Store) ApplyDelta(cal caldav.Calendar, upserts []caldav.Task, deleted []string, token string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO calendars(path,name,sync_token) VALUES(?,?,?)
+		ON CONFLICT(path) DO UPDATE SET name=excluded.name, sync_token=excluded.sync_token`, cal.Path, cal.Name, token); err != nil {
+		return err
+	}
+	for _, t := range upserts {
+		t.Calendar = cal.Path
+		if err := upsert(tx, t); err != nil {
+			return err
+		}
+	}
+	for _, h := range deleted {
+		if _, err := tx.Exec(`DELETE FROM tasks WHERE href=? AND calendar=?`, h, cal.Path); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // PruneCalendars drops calendars (and their tasks) no longer on the server.

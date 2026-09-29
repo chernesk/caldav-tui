@@ -33,3 +33,25 @@ func TestParseTask(t *testing.T) {
 		t.Errorf("raw lost unknown property:\n%s", task.Raw)
 	}
 }
+
+func TestNormETag(t *testing.T) {
+	for in, want := range map[string]string{
+		"abc123":     `"abc123"`, // what go-webdav hands us from a REPORT
+		`"abc123"`:   `"abc123"`, // already wire form (PUT/HEAD header)
+		`W/"weak"`:   `W/"weak"`,
+		"":           "",
+		"  spaced  ": `"spaced"`,
+	} {
+		if got := NormETag(in); got != want {
+			t.Errorf("NormETag(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseTaskQuotesETag(t *testing.T) {
+	cal, _ := ical.NewDecoder(strings.NewReader(sample)).Decode()
+	task, _ := ParseTask("/c/x.ics", "5105d98a", "/c/", cal)
+	if task.ETag != `"5105d98a"` {
+		t.Errorf("cached ETag %q would be sent unquoted in If-Match", task.ETag)
+	}
+}

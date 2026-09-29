@@ -66,6 +66,13 @@ Optional config (all keys have defaults):
 
 `./caldav-tui --no-notify` runs without reminders (handy for testing). `./caldav-tui notify-test` pops up a test notification so you can check your desktop and the buttons.
 
+## How sync works
+
+Each calendar is synced incrementally with a WebDAV sync token (RFC 6578): the server says what changed since
+the last token, and only those tasks are downloaded. If the token expires the app quietly does one full resync;
+if a server has no sync-collection it falls back to diffing ETags. A token only advances together with the data it
+describes, so a failed sync never loses changes. `./caldav-tui sync` prints what each sync did.
+
 ## How writes work
 
 Every write is a conditional PUT/DELETE (`If-Match` with the task's ETag), built by patching only the

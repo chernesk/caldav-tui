@@ -31,13 +31,24 @@ type Task struct {
 
 func (t Task) Done() bool { return t.Status == "COMPLETED" || t.Status == "CANCELLED" }
 
+// NormETag returns an entity-tag in its quoted wire form. go-webdav strips the
+// quotes from ETags it reads out of REPORT responses, but If-Match and If-None-Match
+// need them, so everything we cache goes through here.
+func NormETag(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, `"`) || strings.HasPrefix(s, `W/"`) {
+		return s
+	}
+	return `"` + s + `"`
+}
+
 // ParseTask extracts the first VTODO from an iCalendar object.
 func ParseTask(href, etag, calendar string, cal *ical.Calendar) (Task, bool) {
 	for _, c := range cal.Children {
 		if c.Name != ical.CompToDo {
 			continue
 		}
-		t := Task{Href: href, ETag: etag, Calendar: calendar, Status: "NEEDS-ACTION"}
+		t := Task{Href: href, ETag: NormETag(etag), Calendar: calendar, Status: "NEEDS-ACTION"}
 		p := c.Props
 		t.UID, _ = p.Text(ical.PropUID)
 		t.Summary, _ = p.Text(ical.PropSummary)

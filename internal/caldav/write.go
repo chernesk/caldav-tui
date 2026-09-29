@@ -110,3 +110,7 @@ func TaskFromRaw(href, etag, calendar, raw string) (Task, error) {
 	}
 	return t, nil
 }
+
+func readAll(resp *http.Response) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+}

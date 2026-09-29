@@ -88,14 +88,19 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "sync" {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if err := tui.Sync(ctx, cl, st); err != nil {
+		t0 := time.Now()
+		res, err := tui.Sync(ctx, cl, st)
+		if err != nil {
 			return err
 		}
-		cals, _ := st.Calendars()
-		for _, c := range cals {
-			ts, _ := st.Tasks(c.Path)
-			fmt.Printf("%-30s %d tasks\n", c.Name, len(ts))
+		for _, c := range res.Calendars {
+			total := "?"
+			if c.Total >= 0 {
+				total = fmt.Sprint(c.Total)
+			}
+			fmt.Printf("%-24s %-6s fetched %d, deleted %d, tasks on server %s\n", c.Name, c.Mode, c.Fetched, c.Deleted, total)
 		}
+		fmt.Printf("synced in %v\n", time.Since(t0).Round(time.Millisecond))
 		return nil
 	}
 

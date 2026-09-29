@@ -2,29 +2,12 @@ package tui
 
 import (
 	"context"
-	"time"
 
-	"github.com/chernesk/caldav-tui/internal/caldav"
 	"github.com/chernesk/caldav-tui/internal/store"
+	"github.com/chernesk/caldav-tui/internal/syncer"
 )
 
-// Sync pulls every task calendar from the server into the cache.
-func Sync(ctx context.Context, cl *caldav.Client, st *store.Store) error {
-	cals, err := cl.Calendars(ctx)
-	if err != nil {
-		return err
-	}
-	for _, cal := range cals {
-		tasks, err := cl.Tasks(ctx, cal)
-		if err != nil {
-			return err
-		}
-		if err := st.ReplaceCalendar(cal, tasks); err != nil {
-			return err
-		}
-	}
-	if err := st.PruneCalendars(cals); err != nil {
-		return err
-	}
-	return st.SetMeta("last_sync", time.Now().Format(time.RFC3339))
+// Sync brings the cache up to date from the server.
+func Sync(ctx context.Context, src syncer.Source, st *store.Store) (*syncer.Result, error) {
+	return syncer.Sync(ctx, src, st)
 }
