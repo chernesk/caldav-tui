@@ -16,6 +16,7 @@ import (
 )
 
 type rig struct {
+	ts  *httptest.Server
 	t   *testing.T
 	m   Model
 	srv *testdav.Server
@@ -40,7 +41,7 @@ func newRig(t *testing.T) *rig {
 	if err := st.ReplaceCalendar(caldav.Calendar{Path: calPath, Name: "Tasks"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	r := &rig{t: t, srv: f, st: st}
+	r := &rig{t: t, srv: f, st: st, ts: ts}
 	r.m = New(cl, st)
 	r.send(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return r

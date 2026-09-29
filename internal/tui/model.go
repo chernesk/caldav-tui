@@ -50,9 +50,10 @@ type Model struct {
 	mode    mode
 	form    *form
 	quick   *quickBox
-	confirm caldav.Task // task pending delete confirmation
-	flash   string      // one-line result of the last action, cleared on next key
-	busy    int         // writes in flight
+	confirm caldav.Task     // task pending delete confirmation
+	flash   string          // one-line result of the last action, cleared on next key
+	busy    int             // writes in flight
+	pending map[string]bool // href -> change applied locally, not yet confirmed by the server
 
 	notifier Notifier // nil = reminders off
 	rem      ReminderConfig
@@ -78,7 +79,7 @@ type Model struct {
 }
 
 func New(cl *caldav.Client, st *store.Store) Model {
-	m := Model{cl: cl, st: st, calIdx: -1, syncing: true}
+	m := Model{cl: cl, st: st, calIdx: -1, syncing: true, pending: map[string]bool{}}
 	m.reload()
 	return m
 }
@@ -241,8 +242,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if km, ok := msg.(tea.KeyMsg); ok {
 			m.mode = modeList
 			if km.String() == "y" || km.String() == "Y" {
-				m.busy++
-				return m, m.remove(m.confirm)
+				return m.startDelete(m.confirm)
 			}
 		}
 		return m, nil
@@ -295,8 +295,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "x", " ":
 		if t, ok := m.current(); ok {
-			m.busy++
-			return m, m.toggleDone(t)
+			return m.startToggle(t)
 		}
 	case "a":
 		if cal := m.targetCalendar(); cal != "" {
@@ -364,9 +363,8 @@ func (m Model) updateQuick(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd // the prompt's preview line already shows why; stay open
 		}
 		q := m.quick
-		m.mode, m.quick, m.err = modeList, nil, nil
-		m.busy++
-		return m, m.save(&form{parent: q.parent, calendar: q.calendar}, p.Edit())
+		m.mode, m.quick = modeList, nil
+		return m.startSave(&form{parent: q.parent, calendar: q.calendar}, p.Edit())
 	}
 	return m, cmd
 }
@@ -387,36 +385,9 @@ func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if f.task != nil && e == (caldav.Edit{}) {
 			return m, nil // nothing changed
 		}
-		m.busy++
-		return m, m.save(f, e)
+		return m.startSave(f, e)
 	}
 	return m, cmd
-}
-
-func (m Model) opDone(msg opMsg) (tea.Model, tea.Cmd) {
-	m.busy = max(0, m.busy-1)
-	if msg.err != nil {
-		m.err = msg.err
-		if msg.conflict {
-			m.err = errors.New("changed on the server since last sync; refreshing — try again")
-			if !m.syncing {
-				m.syncing = true
-				return m, m.sync()
-			}
-		}
-		return m, nil
-	}
-	m.err = nil
-	m.flash = msg.status
-	if msg.task != nil && notStarted(*msg.task) && !m.showFuture {
-		m.flash += " (hidden until start date; s shows)"
-	}
-	m.reload()
-	if msg.task != nil {
-		m.selectUID(msg.task.UID)
-	}
-	m.scroll()
-	return m, nil
 }
 
 // selectUID moves the cursor to a task if it's visible.
@@ -568,6 +539,9 @@ func (m Model) renderRow(r row) string {
 	sum := t.Summary
 	if t.RRule != "" {
 		sum += " ↻"
+	}
+	if m.pending[t.Href] {
+		sum += " ⟳"
 	}
 	room := m.w - dueW - 2 - 3 - 1 - 2 - 1 - len(indent)
 	sum = truncate(sum, max(10, room))

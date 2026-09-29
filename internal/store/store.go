@@ -315,6 +315,20 @@ func (s *Store) Snoozes() map[string]time.Time {
 	return out
 }
 
+// Task returns one cached task by href.
+func (s *Store) Task(href string) (caldav.Task, bool) {
+	ts, err := s.Tasks("")
+	if err != nil {
+		return caldav.Task{}, false
+	}
+	for _, t := range ts {
+		if t.Href == href {
+			return t, true
+		}
+	}
+	return caldav.Task{}, false
+}
+
 func (s *Store) SetMeta(k, v string) error {
 	_, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, k, v)
 	return err

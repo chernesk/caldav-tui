@@ -168,8 +168,8 @@ func (m Model) handleNotify(ev notify.Event) (Model, tea.Cmd) {
 	switch ev.Action {
 	case actComplete:
 		m.notifier.Close(ev.ID)
-		m.busy++
-		return m, tea.Batch(m.toggleDone(task), m.waitNotify())
+		m, cmd := m.startToggle(task)
+		return m, tea.Batch(cmd, m.waitNotify())
 	case actSnooze:
 		m.notifier.Close(ev.ID)
 		_ = m.st.Snooze(task.UID, time.Now().Add(m.rem.Snooze))

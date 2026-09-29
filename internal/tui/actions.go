@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,13 +13,15 @@ import (
 	"github.com/chernesk/caldav-tui/internal/ops"
 )
 
-// opMsg is the result of a write. On success the cache has already been
-// updated; the model just reloads and moves the cursor.
+// Writes are optimistic: the change lands in the local cache and the list
+// immediately, then is pushed to the server in the background. If the push fails
+// the cache is rolled back and the error is shown.
+
+// opMsg is the result of pushing one change to the server.
 type opMsg struct {
-	task     *caldav.Task // written task (nil after a delete)
-	status   string
+	p        *ops.Pending
 	err      error
-	conflict bool // server copy changed: re-sync
+	conflict bool // server copy changed underneath us: roll back and re-sync
 }
 
 func newUID() string {
@@ -31,88 +32,106 @@ func newUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func fail(err error) opMsg {
-	return opMsg{err: err, conflict: errors.Is(err, caldav.ErrConflict)}
-}
+// start applies a change locally right now and returns the command that pushes it.
+func (m Model) start(p *ops.Pending, status string) (Model, tea.Cmd) {
+	if p.Kind != ops.Create && m.pending[p.Href()] {
+		m.err = errors.New("still saving that task; try again in a moment")
+		return m, nil
+	}
+	if err := ops.Apply(m.st, p); err != nil {
+		m.err = err
+		return m, nil
+	}
+	m.pending[p.Href()] = true
+	m.busy++
+	m.err = nil
+	m.flash = status
+	if p.Next != nil && notStarted(*p.Next) && !m.showFuture {
+		m.flash += " (hidden until start date; s shows)"
+	}
+	m.reload()
+	if p.Next != nil {
+		m.selectUID(p.Next.UID)
+	}
+	m.scroll()
 
-func run(f func(ctx context.Context) opMsg) tea.Cmd {
-	return func() tea.Msg {
+	cl, st := m.cl, m.st
+	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return f(ctx)
+		err := ops.Push(ctx, cl, st, p)
+		return opMsg{p: p, err: err, conflict: errors.Is(err, caldav.ErrConflict)}
 	}
 }
 
-// toggleDone completes a task (advancing it if recurring) or reopens a completed one.
-func (m Model) toggleDone(t caldav.Task) tea.Cmd {
-	cl, st := m.cl, m.st
-	return run(func(ctx context.Context) opMsg {
-		nt, out, err := ops.ToggleDone(ctx, cl, st, t, time.Now())
-		if err != nil {
-			return fail(err)
-		}
-		status := "completed"
-		switch {
-		case out == ops.Reopened:
-			status = "reopened"
-		case out == ops.Advanced && !nt.Due.IsZero():
-			status = "done — next due " + dueLabel(nt)
-		case out == ops.Advanced:
-			status = "done — repeats"
-		}
-		return opMsg{task: &nt, status: status}
-	})
+func (m Model) startToggle(t caldav.Task) (Model, tea.Cmd) {
+	p, out, err := ops.PrepareToggle(t, time.Now())
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	status := "completed"
+	switch {
+	case out == ops.Reopened:
+		status = "reopened"
+	case out == ops.Advanced && !p.Next.Due.IsZero():
+		status = "done — next due " + dueLabel(*p.Next)
+	case out == ops.Advanced:
+		status = "done — repeats"
+	}
+	return m.start(p, status)
 }
 
-// save creates a task (f.task == nil) or applies the form's edits to one.
-func (m Model) save(f *form, e caldav.Edit) tea.Cmd {
-	cl, st := m.cl, m.st
-	existing := f.task
-	parent, calendar := f.parent, f.calendar
-	return run(func(ctx context.Context) opMsg {
-		now := time.Now()
-		if existing != nil {
-			raw, err := caldav.ApplyEdit(existing.Raw, e, now)
-			if err != nil {
-				return fail(err)
-			}
-			nt, err := ops.Put(ctx, cl, st, *existing, raw)
-			if err != nil {
-				return fail(err)
-			}
-			return opMsg{task: &nt, status: "saved"}
-		}
-		uid := newUID()
-		raw, err := caldav.NewRaw(uid, parent, e, now)
+// startSave creates a task (f.task == nil) or applies the form's edits to one.
+func (m Model) startSave(f *form, e caldav.Edit) (Model, tea.Cmd) {
+	now := time.Now()
+	if f.task == nil {
+		p, err := ops.PrepareCreate(f.calendar, newUID(), f.parent, e, now)
 		if err != nil {
-			return fail(err)
+			m.err = err
+			return m, nil
 		}
-		href := strings.TrimRight(calendar, "/") + "/" + uid + ".ics"
-		etag, err := cl.Put(ctx, href, raw, "")
-		if err != nil {
-			return fail(err)
-		}
-		nt, err := ops.Cache(st, href, etag, calendar, raw)
-		if err != nil {
-			return fail(err)
-		}
-		return opMsg{task: &nt, status: "added"}
-	})
+		return m.start(p, "added")
+	}
+	// build on the freshest cached copy: a sync may have landed while the form was open
+	base := *f.task
+	if fresh, ok := m.st.Task(base.Href); ok {
+		base = fresh
+	}
+	p, err := ops.PrepareEdit(base, e, now)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	return m.start(p, "saved")
 }
 
-func (m Model) remove(t caldav.Task) tea.Cmd {
-	cl, st := m.cl, m.st
-	return run(func(ctx context.Context) opMsg {
-		etag, err := ops.ETagOf(ctx, cl, t)
-		if err != nil {
-			return fail(err)
+func (m Model) startDelete(t caldav.Task) (Model, tea.Cmd) {
+	return m.start(ops.PrepareDelete(t), "deleted “"+truncate(t.Summary, 30)+"”")
+}
+
+// opDone handles the server's answer. Success needs nothing more (the cache
+// already holds the change); failure rolls the cache back.
+func (m Model) opDone(msg opMsg) (tea.Model, tea.Cmd) {
+	m.busy = max(0, m.busy-1)
+	delete(m.pending, msg.p.Href())
+	if msg.err == nil {
+		m.reload()
+		m.scroll()
+		return m, nil
+	}
+	_ = ops.Revert(m.st, msg.p)
+	m.flash = ""
+	m.reload()
+	m.scroll()
+	if msg.conflict {
+		m.err = errors.New("changed on the server since last sync; change undone, refreshing — try again")
+		if !m.syncing {
+			m.syncing = true
+			return m, m.sync()
 		}
-		if err := cl.Delete(ctx, t.Href, etag); err != nil {
-			return fail(err)
-		}
-		if err := st.DeleteTask(t.Href); err != nil {
-			return fail(err)
-		}
-		return opMsg{status: "deleted “" + truncate(t.Summary, 30) + "”"}
-	})
+		return m, nil
+	}
+	m.err = fmt.Errorf("not saved (change undone): %w", msg.err)
+	return m, nil
 }

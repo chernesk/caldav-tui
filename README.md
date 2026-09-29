@@ -73,6 +73,13 @@ the last token, and only those tasks are downloaded. If the token expires the ap
 if a server has no sync-collection it falls back to diffing ETags. A token only advances together with the data it
 describes, so a failed sync never loses changes. `./caldav-tui sync` prints what each sync did.
 
+## Optimistic updates
+
+Writes feel instant: the change appears in the list the moment you make it (with a ⟳ next to the task while it
+saves), and is pushed to the server in the background. If the push fails (offline, or the task changed on the
+server), the change is rolled back and you get a message, so the list never keeps something the server doesn't have.
+A task with a save in flight can't be edited again until it's confirmed.
+
 ## How writes work
 
 Every write is a conditional PUT/DELETE (`If-Match` with the task's ETag), built by patching only the
@@ -83,5 +90,5 @@ a lost update.
 
 ## Status
 
-Read, complete/reopen, add, subtask, edit, delete and reminders work. Next: sync-token incremental sync,
-offline write queue.
+Read, complete/reopen, add, subtask, edit, delete and reminders work. Next (only if needed): a persistent offline write queue, so changes made with no network survive and are
+sent later instead of being rolled back.
