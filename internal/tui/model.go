@@ -38,12 +38,14 @@ type Model struct {
 	cl *caldav.Client
 	st *store.Store
 
-	cals     []caldav.Calendar
-	calIdx   int // -1 = all calendars
-	rows     []row
-	cursor   int
-	offset   int
-	showDone bool
+	cals       []caldav.Calendar
+	calIdx     int // -1 = all calendars
+	rows       []row
+	cursor     int
+	offset     int
+	showDone   bool
+	showFuture bool // include tasks whose start date is after today
+	hidden     int  // tasks filtered out as not yet started
 
 	syncing  bool
 	lastSync string
@@ -85,8 +87,13 @@ func (m *Model) reload() {
 		return
 	}
 	var keep []caldav.Task
+	m.hidden = 0
 	for _, t := range tasks {
 		if t.Done() && !m.showDone {
+			continue
+		}
+		if !m.showFuture && notStarted(t) {
+			m.hidden++
 			continue
 		}
 		keep = append(keep, t)
@@ -202,6 +209,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.showDone = !m.showDone
 			m.reload()
+		case "s":
+			m.showFuture = !m.showFuture
+			m.reload()
 		case "r":
 			if !m.syncing {
 				m.syncing = true
@@ -218,8 +228,8 @@ func (m *Model) move(d int) {
 }
 
 func (m Model) listHeight() int {
-	// header + blank + footer/status + detail pane
-	return max(3, m.h-4-detailLines)
+	// header (2) + separator + status + error line + detail pane
+	return max(3, m.h-5-detailLines)
 }
 
 func (m *Model) scroll() {
@@ -290,10 +300,18 @@ func (m Model) View() string {
 	if m.showDone {
 		status += " · showing completed"
 	}
-	keys := "j/k move · tab calendar · c completed · r refresh · q quit"
-	b.WriteString(dim.Render(status+"  |  "+keys) + "\n")
+	if m.showFuture {
+		status += " · showing unstarted"
+	} else if m.hidden > 0 {
+		status += fmt.Sprintf(" · %d unstarted hidden", m.hidden)
+	}
+	keys := "j/k move · tab cal · c done · s unstarted · r sync · q quit"
+	b.WriteString(dim.Render(status + "  |  " + keys))
+	// Always reserve the error line, and end without a newline, so the view is
+	// exactly m.h lines and the header never scrolls off the top.
+	b.WriteString("\n")
 	if m.err != nil {
-		b.WriteString(errStyle.Render("error: " + m.err.Error()))
+		b.WriteString(errStyle.Render(truncate("error: "+m.err.Error(), m.w)))
 	}
 	return b.String()
 }
@@ -314,7 +332,7 @@ func (m Model) renderRow(r row) string {
 		prio = prioLow.Render("↓ ")
 	}
 	due := dueLabel(t)
-	dueW := 12
+	dueW := 14
 	dueCol := padTo(due, dueW)
 	switch {
 	case t.Done() || t.Due.IsZero():
@@ -368,6 +386,13 @@ func sameDay(a, b time.Time) bool {
 	ay, am, ad := a.Local().Date()
 	by, bm, bd := b.Local().Date()
 	return ay == by && am == bm && ad == bd
+}
+
+// notStarted reports whether the task's start date is after today. Like the
+// Chrome extension, this compares calendar days, so a task starting later today
+// is already visible.
+func notStarted(t caldav.Task) bool {
+	return !t.Start.IsZero() && startOfDay(t.Start).After(startOfDay(time.Now()))
 }
 
 func isOverdue(t caldav.Task) bool {

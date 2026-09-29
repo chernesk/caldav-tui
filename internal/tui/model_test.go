@@ -28,3 +28,22 @@ func TestBuildTree(t *testing.T) {
 		}
 	}
 }
+
+func TestNotStarted(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name  string
+		start time.Time
+		want  bool
+	}{
+		{"no start", time.Time{}, false},
+		{"yesterday", now.AddDate(0, 0, -1), false},
+		{"later today", startOfDay(now).Add(23 * time.Hour), false},
+		{"tomorrow", now.AddDate(0, 0, 1), true},
+	}
+	for _, c := range cases {
+		if got := notStarted(caldav.Task{Start: c.start}); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}

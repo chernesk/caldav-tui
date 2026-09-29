@@ -22,7 +22,7 @@ Create `~/.config/caldav-tui/config.json` (use a Fastmail app password with CalD
 
 ## Keys
 
-j/k move · ctrl-d/u half page · g/G top/bottom · tab/shift-tab calendar · c show completed · r refresh · q quit
+j/k move · ctrl-d/u half page · g/G top/bottom · tab/shift-tab calendar · c show completed · s show unstarted (start date in the future; hidden by default) · r refresh · q quit
 
 ## Status
 
