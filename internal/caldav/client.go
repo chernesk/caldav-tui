@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
@@ -21,9 +23,39 @@ type Calendar struct {
 	Name string
 }
 
+// resolveEndpoint applies RFC 6764 bootstrapping: when the configured server URL
+// has no path, follow /.well-known/caldav ourselves. Go's HTTP client rewrites a
+// redirected PROPFIND into a GET, so it can't be left to follow the 301.
+func resolveEndpoint(server string) string {
+	u, err := url.Parse(server)
+	if err != nil || strings.Trim(u.Path, "/") != "" {
+		return server
+	}
+	wk := u.ResolveReference(&url.URL{Path: "/.well-known/caldav"})
+	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(http.MethodHead, wk.String(), nil)
+	if err != nil {
+		return server
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return server
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		if loc, err := resp.Location(); err == nil {
+			return loc.String()
+		}
+	}
+	if resp.StatusCode < 300 {
+		return wk.String()
+	}
+	return server
+}
+
 func New(server, user, pass string) (*Client, error) {
 	hc := webdav.HTTPClientWithBasicAuth(http.DefaultClient, user, pass)
-	c, err := wcaldav.NewClient(hc, server)
+	c, err := wcaldav.NewClient(hc, resolveEndpoint(server))
 	if err != nil {
 		return nil, err
 	}
