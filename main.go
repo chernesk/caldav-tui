@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -99,7 +100,7 @@ func run() error {
 	}
 
 	model := tui.New(cl, st)
-	if cfg.Notify.On() {
+	if cfg.Notify.On() && !slices.Contains(os.Args[1:], "--no-notify") {
 		if n, err := notify.New(); err != nil {
 			fmt.Fprintf(os.Stderr, "reminders off: no desktop notification service (%v)\n", err)
 		} else {

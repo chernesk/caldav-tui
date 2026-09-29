@@ -34,9 +34,16 @@ var (
 // ParseWhen understands things like "today", "tomorrow 2pm", "fri", "+3d",
 // "oct 5", "5 oct 2027", "10/5", "2026-10-05 14:30". Empty input clears.
 func ParseWhen(s string, now time.Time) (caldav.When, error) {
+	w, _, err := parseWhen(s, now)
+	return w, err
+}
+
+// parseWhen also reports whether the text named a date (as opposed to just a
+// time of day, which defaults to today).
+func parseWhen(s string, now time.Time) (caldav.When, bool, error) {
 	toks := strings.Fields(strings.ToLower(strings.TrimSpace(s)))
 	if len(toks) == 0 {
-		return caldav.When{}, nil
+		return caldav.When{}, false, nil
 	}
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	var date time.Time
@@ -51,7 +58,7 @@ func ParseWhen(s string, now time.Time) (caldav.When, error) {
 	for i := 0; i < len(toks); i++ {
 		tok := toks[i]
 		// "at" and "in" are filler
-		if tok == "at" || tok == "on" || tok == "in" {
+		if tok == "at" || tok == "on" || tok == "in" || tok == "by" || tok == "due" || tok == "until" {
 			continue
 		}
 		// glue "2 pm" back together
@@ -143,26 +150,27 @@ func ParseWhen(s string, now time.Time) (caldav.When, error) {
 		case timeRe.MatchString(tok):
 			d, ok := parseClock(tok)
 			if !ok {
-				return caldav.When{}, fmt.Errorf("bad time %q", tok)
+				return caldav.When{}, false, fmt.Errorf("bad time %q", tok)
 			}
 			clock = &d
 		default:
-			return caldav.When{}, fmt.Errorf("can't read %q", tok)
+			return caldav.When{}, false, fmt.Errorf("can't read %q", tok)
 		}
 		if err != nil {
-			return caldav.When{}, err
+			return caldav.When{}, false, err
 		}
 	}
-	if date.IsZero() {
+	hasDate := !date.IsZero()
+	if !hasDate {
 		if clock == nil {
-			return caldav.When{}, fmt.Errorf("no date in %q", s)
+			return caldav.When{}, false, fmt.Errorf("no date in %q", s)
 		}
 		date = today // "3pm" alone means today
 	}
 	if clock != nil {
-		return caldav.When{T: date.Add(*clock), HasTime: true}, nil
+		return caldav.When{T: date.Add(*clock), HasTime: true}, hasDate, nil
 	}
-	return caldav.When{T: date}, nil
+	return caldav.When{T: date}, hasDate, nil
 }
 
 func isWeekday(s string) bool { _, ok := weekdays[s]; return ok }
@@ -273,7 +281,7 @@ func PriorityText(p int) string {
 }
 
 var (
-	everyRe   = regexp.MustCompile(`^(?:every\s+)?(\d+)\s*(day|days|week|weeks|month|months|year|years)$`)
+	everyRe   = regexp.MustCompile(`^(?:every\s+)?(\d+|other)\s*(day|days|week|weeks|month|months|year|years)$`)
 	freqWords = map[string]string{
 		"daily": "DAILY", "day": "DAILY", "weekly": "WEEKLY", "week": "WEEKLY",
 		"monthly": "MONTHLY", "month": "MONTHLY", "yearly": "YEARLY", "year": "YEARLY", "annually": "YEARLY",
@@ -305,7 +313,10 @@ func ParseRepeat(s string) (string, error) {
 		return "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", nil
 	}
 	if m := everyRe.FindStringSubmatch(v); m != nil {
-		n, _ := strconv.Atoi(m[1])
+		n := 2 // "every other week"
+		if m[1] != "other" {
+			n, _ = strconv.Atoi(m[1])
+		}
 		if n < 1 {
 			return "", fmt.Errorf("repeat interval must be at least 1")
 		}

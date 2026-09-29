@@ -25,12 +25,29 @@ Create `~/.config/caldav-tui/config.json` (use a Fastmail app password with CalD
 List: j/k move · ctrl-d/u half page · g/G top/bottom · tab/shift-tab calendar · c show completed ·
 s show unstarted (start date in the future; hidden by default) · r refresh · q quit
 
-Actions: x or space complete/reopen (recurring tasks advance to the next occurrence) · a add ·
-A add subtask under the selected task · e or enter edit · d delete (asks y/N)
+Actions: x or space complete/reopen (recurring tasks advance to the next occurrence) · a quick-add ·
+A quick-add a subtask under the selected task · e or enter edit · d delete (asks y/N)
 
 Form: tab/shift-tab or up/down between fields · enter or ctrl-s save · esc cancel. Dates take
 `today`, `tomorrow 2pm`, `fri`, `+3d`, `oct 5`, `2026-10-05 14:30`; repeat takes `daily`,
 `weekly mon,wed`, `every 2 weeks`, `monthly`, `weekdays`, or a raw `FREQ=...` rule.
+
+## Quick add
+
+`a` opens a one-line prompt with a live preview; enter adds, tab opens the full form pre-filled.
+
+    call mom fri 5pm !high
+    water plants every monday 9am
+    pay rent by oct 1 // paid through the app
+    plan trip start:oct 5 due:oct 20
+    standup weekdays 9:30am
+
+- a date/time at the end of the title is the due date (`tomorrow 2pm`, `fri`, `+3d`, `oct 5`, `in 2 weeks`)
+- `!high` `!med` `!low` (or `!1`-`!9`, `!!!`) set priority
+- `every week`, `every 2 weeks`, `every other week`, `every mon,wed`, `daily`, `weekdays`... set the repeat;
+  with no date, the first matching day becomes the due date
+- `due:` / `start:` set dates explicitly (a start date hides the task until then)
+- everything after ` // ` is the notes; `\word` keeps a word literal (`\!important`)
 
 ## Reminders
 
@@ -47,7 +64,7 @@ Optional config (all keys have defaults):
 
     "notify": { "enabled": true, "default_time": "09:00", "sync_minutes": 15, "snooze_minutes": 60 }
 
-`./caldav-tui notify-test` pops up a test notification so you can check your desktop and the buttons.
+`./caldav-tui --no-notify` runs without reminders (handy for testing). `./caldav-tui notify-test` pops up a test notification so you can check your desktop and the buttons.
 
 ## How writes work
 
@@ -59,5 +76,5 @@ a lost update.
 
 ## Status
 
-Read, complete/reopen, add, subtask, edit, delete and reminders work. Next: quick-add with natural language in
-the title, sync-token incremental sync, offline write queue.
+Read, complete/reopen, add, subtask, edit, delete and reminders work. Next: sync-token incremental sync,
+offline write queue.

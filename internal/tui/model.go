@@ -42,12 +42,14 @@ type mode int
 const (
 	modeList mode = iota
 	modeForm
+	modeQuick
 	modeConfirmDelete
 )
 
 type Model struct {
 	mode    mode
 	form    *form
+	quick   *quickBox
 	confirm caldav.Task // task pending delete confirmation
 	flash   string      // one-line result of the last action, cleared on next key
 	busy    int         // writes in flight
@@ -202,6 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.form != nil {
 			m.form.resize(m.w)
 		}
+		if m.quick != nil {
+			m.quick.input.Width = max(20, min(m.w-10, 90))
+		}
 		m.scroll()
 		return m, nil
 	case syncDone:
@@ -229,6 +234,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeForm:
 		return m.updateForm(msg)
+	case modeQuick:
+		return m.updateQuick(msg)
 	case modeConfirmDelete:
 		if km, ok := msg.(tea.KeyMsg); ok {
 			m.mode = modeList
@@ -292,15 +299,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		if cal := m.targetCalendar(); cal != "" {
-			m.form = newForm(nil, "", "", cal, m.w)
-			m.mode = modeForm
+			m.quick = newQuickBox("", "", cal, m.w)
+			m.mode = modeQuick
 			return m, textinput.Blink
 		}
 		m.err = errors.New("no task calendar yet; sync first")
 	case "A":
 		if t, ok := m.current(); ok {
-			m.form = newForm(nil, t.UID, t.Summary, t.Calendar, m.w)
-			m.mode = modeForm
+			m.quick = newQuickBox(t.UID, t.Summary, t.Calendar, m.w)
+			m.mode = modeQuick
 			return m, textinput.Blink
 		}
 	case "e", "enter":
@@ -339,6 +346,28 @@ func (m Model) targetCalendar() string {
 		return m.cals[0].Path
 	}
 	return ""
+}
+
+func (m Model) updateQuick(msg tea.Msg) (tea.Model, tea.Cmd) {
+	act, cmd := m.quick.update(msg)
+	switch act {
+	case quickCancel:
+		m.mode, m.quick = modeList, nil
+	case quickExpand:
+		m.form = m.quick.expandForm(time.Now(), m.w)
+		m.mode, m.quick = modeForm, nil
+		return m, textinput.Blink
+	case quickSubmit:
+		p, err := QuickParse(m.quick.input.Value(), time.Now())
+		if err != nil {
+			return m, cmd // the prompt's preview line already shows why; stay open
+		}
+		q := m.quick
+		m.mode, m.quick, m.err = modeList, nil, nil
+		m.busy++
+		return m, m.save(&form{parent: q.parent, calendar: q.calendar}, p.Edit())
+	}
+	return m, cmd
 }
 
 func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -426,6 +455,9 @@ func (m Model) View() string {
 	}
 	if m.mode == modeForm && m.form != nil {
 		return m.form.view(time.Now())
+	}
+	if m.mode == modeQuick && m.quick != nil {
+		return m.quick.view(time.Now())
 	}
 	var b strings.Builder
 

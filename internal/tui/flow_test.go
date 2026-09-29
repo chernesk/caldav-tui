@@ -185,17 +185,18 @@ func TestFlowCompleteRecurringAdvances(t *testing.T) {
 func TestFlowAddEditDelete(t *testing.T) {
 	r := newRig(t)
 
-	// add
+	// add via the full form: quick prompt -> tab expands it
 	r.key("a")
-	if r.m.mode != modeForm {
-		t.Fatal("form did not open")
+	if r.m.mode != modeQuick {
+		t.Fatal("quick prompt did not open")
 	}
-	r.key("Buy milk")
+	r.key("Buy milk !high")
+	r.key("tab")
+	if r.m.mode != modeForm || r.m.form.text(fTitle) != "Buy milk" || r.m.form.text(fPrio) != "high" {
+		t.Fatalf("expand lost the parsed fields: mode=%v", r.m.mode)
+	}
 	r.key("tab")
 	r.key("tomorrow 2pm")
-	r.key("tab")
-	r.key("tab")
-	r.key("high")
 	r.key("enter")
 	if r.m.mode != modeList || r.m.err != nil {
 		t.Fatalf("mode=%v err=%v form err=%v", r.m.mode, r.m.err, r.m.form)
@@ -307,5 +308,36 @@ func TestFlowConflictTriggersSync(t *testing.T) {
 	r.m = next.(Model)
 	if cmd == nil || !r.m.syncing || r.m.err == nil {
 		t.Errorf("conflict should start a sync and show an error: syncing=%v err=%v", r.m.syncing, r.m.err)
+	}
+}
+
+func TestFlowQuickAdd(t *testing.T) {
+	r := newRig(t)
+	r.key("a")
+	if r.m.mode != modeQuick {
+		t.Fatal("quick prompt did not open")
+	}
+	r.key("call mom every friday 5pm !high // ask about the trip")
+	r.key("enter")
+	if r.m.mode != modeList || r.m.err != nil || len(r.m.rows) != 1 {
+		t.Fatalf("mode=%v err=%v rows=%d", r.m.mode, r.m.err, len(r.m.rows))
+	}
+	tk := r.m.rows[0].task
+	if tk.Summary != "call mom" || tk.Priority != 1 || tk.RRule != "FREQ=WEEKLY;BYDAY=FR" || tk.DueAllDay || tk.Due.Hour() != 17 {
+		t.Errorf("bad task: %+v", tk)
+	}
+	if tk.Notes != "ask about the trip" {
+		t.Errorf("notes = %q", tk.Notes)
+	}
+
+	// empty / unparseable input keeps the prompt open
+	r.key("a")
+	r.key("enter")
+	if r.m.mode != modeQuick {
+		t.Error("empty submit should keep the prompt open")
+	}
+	r.key("esc")
+	if r.m.mode != modeList {
+		t.Error("esc should close the prompt")
 	}
 }
