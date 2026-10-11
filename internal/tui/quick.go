@@ -17,6 +17,7 @@ type Quick struct {
 	Due      caldav.When
 	Start    caldav.When
 	Priority int
+	PrioSet  bool // priority was given explicitly (so "!none" can override a default)
 	RRule    string
 	Notes    string
 }
@@ -56,13 +57,19 @@ func QuickParse(input string, now time.Time) (Quick, error) {
 		if lit(i) || !prioTokRe.MatchString(t) {
 			continue
 		}
-		if p, err := ParsePriority(t[1:]); err == nil && p != 0 || t == "!" {
-			if t == "!" {
-				p = 5
-			} else if t == "!!" || t == "!!!" {
-				p = 1
-			}
-			q.Priority, used[i] = p, true
+		p, ok := 0, true
+		switch t {
+		case "!":
+			p = 5
+		case "!!", "!!!":
+			p = 1
+		default:
+			var err error
+			p, err = ParsePriority(t[1:])
+			ok = err == nil
+		}
+		if ok {
+			q.Priority, q.PrioSet, used[i] = p, true, true
 		}
 	}
 
@@ -239,6 +246,14 @@ func firstOccurrence(rule string, now time.Time) (time.Time, bool) {
 	return n, !n.IsZero()
 }
 
+// WithDefault fills in def as the priority when none was given explicitly.
+func (q Quick) WithDefault(def int) Quick {
+	if !q.PrioSet && def != 0 {
+		q.Priority, q.PrioSet = def, true
+	}
+	return q
+}
+
 // Describe summarises what was understood, for the live preview.
 func (q Quick) Describe() string {
 	parts := []string{q.Title}
@@ -275,7 +290,7 @@ func (q Quick) Edit() caldav.Edit {
 	if !q.Start.IsZero() {
 		e.Start = &q.Start
 	}
-	if q.Priority != 0 {
+	if q.PrioSet || q.Priority != 0 {
 		e.Priority = &q.Priority
 	}
 	if q.RRule != "" {

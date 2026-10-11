@@ -105,6 +105,11 @@ func run() error {
 	}
 
 	model := tui.New(cl, st)
+	defPrio, err := tui.ParsePriority(cfg.DefaultPriority)
+	if err != nil {
+		return fmt.Errorf("config default_priority %q: %w", cfg.DefaultPriority, err)
+	}
+	model = model.WithDefaultPriority(defPrio)
 	if cfg.Notify.On() && !slices.Contains(os.Args[1:], "--no-notify") {
 		if n, err := notify.New(); err != nil {
 			fmt.Fprintf(os.Stderr, "reminders off: no desktop notification service (%v)\n", err)

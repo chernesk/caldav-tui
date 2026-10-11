@@ -47,13 +47,14 @@ const (
 )
 
 type Model struct {
-	mode    mode
-	form    *form
-	quick   *quickBox
-	confirm caldav.Task     // task pending delete confirmation
-	flash   string          // one-line result of the last action, cleared on next key
-	busy    int             // writes in flight
-	pending map[string]bool // href -> change applied locally, not yet confirmed by the server
+	mode        mode
+	form        *form
+	quick       *quickBox
+	confirm     caldav.Task     // task pending delete confirmation
+	flash       string          // one-line result of the last action, cleared on next key
+	busy        int             // writes in flight
+	defaultPrio int             // priority given to new tasks that don't specify one (0 = none)
+	pending     map[string]bool // href -> change applied locally, not yet confirmed by the server
 
 	notifier Notifier // nil = reminders off
 	rem      ReminderConfig
@@ -95,6 +96,13 @@ func (m Model) sync() tea.Cmd {
 	}
 }
 
+// WithDefaultPriority sets the priority (0 = none, 1 high .. 9 low) given to new
+// tasks that don't specify one. Existing tasks are never changed.
+func (m Model) WithDefaultPriority(p int) Model {
+	m.defaultPrio = p
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.sync()}
 	if m.notifier != nil {
@@ -129,7 +137,7 @@ func (m *Model) reload() {
 		}
 		keep = append(keep, t)
 	}
-	m.rows = buildTree(keep)
+	m.rows = buildTree(keep, m.defaultPrio)
 	if m.cursor >= len(m.rows) {
 		m.cursor = max(0, len(m.rows)-1)
 	}
@@ -137,7 +145,7 @@ func (m *Model) reload() {
 }
 
 // less orders open tasks first, then by due date (undated last), priority, summary.
-func less(a, b caldav.Task) bool {
+func less(a, b caldav.Task, def int) bool {
 	if a.Done() != b.Done() {
 		return !a.Done()
 	}
@@ -147,14 +155,19 @@ func less(a, b caldav.Task) bool {
 	if !a.Due.Equal(b.Due) {
 		return a.Due.Before(b.Due)
 	}
-	pa, pb := prioRank(a.Priority), prioRank(b.Priority)
+	pa, pb := prioRank(a.Priority, def), prioRank(b.Priority, def)
 	if pa != pb {
 		return pa < pb
 	}
 	return strings.ToLower(a.Summary) < strings.ToLower(b.Summary)
 }
 
-func prioRank(p int) int {
+// prioRank orders priorities (1 = highest). Tasks with no priority rank as the
+// configured default, so old unprioritized tasks mix with new default-priority ones.
+func prioRank(p, def int) int {
+	if p == 0 {
+		p = def
+	}
 	if p == 0 {
 		return 10
 	}
@@ -163,7 +176,7 @@ func prioRank(p int) int {
 
 // buildTree orders tasks with subtasks nested under their RELATED-TO parent.
 // A task whose parent isn't in the visible set is shown as a root.
-func buildTree(tasks []caldav.Task) []row {
+func buildTree(tasks []caldav.Task, def int) []row {
 	byUID := map[string]bool{}
 	for _, t := range tasks {
 		byUID[t.UID] = true
@@ -177,7 +190,7 @@ func buildTree(tasks []caldav.Task) []row {
 			roots = append(roots, t)
 		}
 	}
-	sort.SliceStable(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
+	sort.SliceStable(roots, func(i, j int) bool { return less(roots[i], roots[j], def) })
 	var out []row
 	seen := map[string]bool{}
 	var walk func(t caldav.Task, depth int)
@@ -188,7 +201,7 @@ func buildTree(tasks []caldav.Task) []row {
 		seen[t.UID] = true
 		out = append(out, row{t, depth})
 		c := kids[t.UID]
-		sort.SliceStable(c, func(i, j int) bool { return less(c[i], c[j]) })
+		sort.SliceStable(c, func(i, j int) bool { return less(c[i], c[j], def) })
 		for _, k := range c {
 			walk(k, depth+1)
 		}
@@ -299,20 +312,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		if cal := m.targetCalendar(); cal != "" {
-			m.quick = newQuickBox("", "", cal, m.w)
+			m.quick = newQuickBox("", "", cal, m.w, m.defaultPrio)
 			m.mode = modeQuick
 			return m, textinput.Blink
 		}
 		m.err = errors.New("no task calendar yet; sync first")
 	case "A":
 		if t, ok := m.current(); ok {
-			m.quick = newQuickBox(t.UID, t.Summary, t.Calendar, m.w)
+			m.quick = newQuickBox(t.UID, t.Summary, t.Calendar, m.w, m.defaultPrio)
 			m.mode = modeQuick
 			return m, textinput.Blink
 		}
 	case "e", "enter":
 		if t, ok := m.current(); ok {
-			m.form = newForm(&t, "", "", t.Calendar, m.w)
+			m.form = newForm(&t, "", "", t.Calendar, m.w, 0)
 			m.mode = modeForm
 			return m, textinput.Blink
 		}
@@ -364,7 +377,7 @@ func (m Model) updateQuick(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		q := m.quick
 		m.mode, m.quick = modeList, nil
-		return m.startSave(&form{parent: q.parent, calendar: q.calendar}, p.Edit())
+		return m.startSave(&form{parent: q.parent, calendar: q.calendar}, p.WithDefault(m.defaultPrio).Edit())
 	}
 	return m, cmd
 }
@@ -521,8 +534,8 @@ func (m Model) renderRow(r row) string {
 		prio = prioHigh.Render("!!")
 	case t.Priority == 5:
 		prio = prioMed.Render("! ")
-	case t.Priority >= 6:
-		prio = prioLow.Render("↓ ")
+	case t.Priority >= 6 && t.Priority != m.defaultPrio:
+		prio = prioLow.Render("↓ ") // the default level is the baseline: no marker
 	}
 	due := dueLabel(t)
 	dueW := 14

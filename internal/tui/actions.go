@@ -86,6 +86,10 @@ func (m Model) startToggle(t caldav.Task) (Model, tea.Cmd) {
 func (m Model) startSave(f *form, e caldav.Edit) (Model, tea.Cmd) {
 	now := time.Now()
 	if f.task == nil {
+		if e.Priority == nil && m.defaultPrio != 0 {
+			d := m.defaultPrio // a blank priority field means "use the default"; "none" is explicit
+			e.Priority = &d
+		}
 		p, err := ops.PrepareCreate(f.calendar, newUID(), f.parent, e, now)
 		if err != nil {
 			m.err = err

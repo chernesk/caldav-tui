@@ -24,16 +24,17 @@ type quickBox struct {
 	parent      string // parent UID when adding a subtask
 	parentTitle string
 	calendar    string
+	defPrio     int // priority for new tasks that don't say
 }
 
-func newQuickBox(parent, parentTitle, calendar string, w int) *quickBox {
+func newQuickBox(parent, parentTitle, calendar string, w, defPrio int) *quickBox {
 	in := textinput.New()
 	in.Prompt = "❯ "
 	in.Placeholder = "call mom fri 5pm !high"
 	in.CharLimit = 500
 	in.Width = max(20, min(w-10, 90))
 	in.Focus()
-	return &quickBox{input: in, parent: parent, parentTitle: parentTitle, calendar: calendar}
+	return &quickBox{input: in, parent: parent, parentTitle: parentTitle, calendar: calendar, defPrio: defPrio}
 }
 
 func (q *quickBox) update(msg tea.Msg) (quickAction, tea.Cmd) {
@@ -65,7 +66,7 @@ func (q *quickBox) view(now time.Time) string {
 		if p, err := QuickParse(txt, now); err != nil {
 			b.WriteString(dim.Render("  " + err.Error()))
 		} else {
-			b.WriteString("  → " + p.Describe())
+			b.WriteString("  → " + p.WithDefault(q.defPrio).Describe())
 		}
 	}
 	b.WriteString("\n\n")
@@ -83,7 +84,7 @@ func (q *quickBox) view(now time.Time) string {
 
 // expandForm opens the full form pre-filled from whatever the prompt understood.
 func (q *quickBox) expandForm(now time.Time, w int) *form {
-	f := newForm(nil, q.parent, q.parentTitle, q.calendar, w)
+	f := newForm(nil, q.parent, q.parentTitle, q.calendar, w, q.defPrio)
 	raw := strings.TrimSpace(q.input.Value())
 	if raw == "" {
 		return f
@@ -93,6 +94,7 @@ func (q *quickBox) expandForm(now time.Time, w int) *form {
 		f.inputs[fTitle].SetValue(raw) // couldn't parse: keep the text, let the user fix it
 		return f
 	}
+	p = p.WithDefault(q.defPrio)
 	f.inputs[fTitle].SetValue(p.Title)
 	f.inputs[fDue].SetValue(FormatWhen(p.Due))
 	f.inputs[fStart].SetValue(FormatWhen(p.Start))

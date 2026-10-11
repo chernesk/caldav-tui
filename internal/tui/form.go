@@ -31,7 +31,7 @@ var fieldHints = [nFields]string{
 	"",
 	"today, tomorrow 2pm, fri, +3d, oct 5, 2026-10-05 14:30",
 	"same formats as due; hidden from the list until this day",
-	"high, medium, low, none",
+	"high, medium, low, or none for no priority",
 	"daily, weekly mon,wed, every 2 weeks, monthly, weekdays",
 	"",
 }
@@ -58,7 +58,8 @@ type form struct {
 	w        int
 }
 
-func newForm(t *caldav.Task, parent, parentTitle, calendar string, w int) *form {
+// newForm builds the add/edit form. defPrio pre-fills the priority of new tasks.
+func newForm(t *caldav.Task, parent, parentTitle, calendar string, w, defPrio int) *form {
 	f := &form{task: t, parent: parent, parentOf: parentTitle, calendar: calendar, w: w}
 	for i := range f.inputs {
 		in := textinput.New()
@@ -86,6 +87,10 @@ func newForm(t *caldav.Task, parent, parentTitle, calendar string, w int) *form 
 	}
 	for i := range f.inputs {
 		f.inputs[i].SetValue(f.orig[i])
+	}
+	if t == nil && defPrio != 0 {
+		// orig stays empty, so the pre-filled default counts as a change and is saved
+		f.inputs[fPrio].SetValue(PriorityText(defPrio))
 	}
 	f.notes.SetValue(f.orig[fNotes])
 	f.resize(w)

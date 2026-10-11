@@ -18,6 +18,10 @@ type Config struct {
 	Password    string `json:"password,omitempty"`
 	PasswordCmd string `json:"password_cmd,omitempty"` // e.g. "pass show fastmail/caldav"
 	Notify      Notify `json:"notify"`
+
+	// DefaultPriority is given to new tasks that don't specify one: none, low,
+	// medium or high. Empty means none.
+	DefaultPriority string `json:"default_priority,omitempty"`
 }
 
 // Notify controls reminders, which fire while the TUI is open.

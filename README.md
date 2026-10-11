@@ -32,6 +32,19 @@ Form: tab/shift-tab or up/down between fields · enter or ctrl-s save · esc can
 `today`, `tomorrow 2pm`, `fri`, `+3d`, `oct 5`, `2026-10-05 14:30`; repeat takes `daily`,
 `weekly mon,wed`, `every 2 weeks`, `monthly`, `weekdays`, or a raw `FREQ=...` rule.
 
+## Default priority
+
+New tasks get the priority in `default_priority` when you don't give one (`none`, `low`, `medium` or `high`;
+unset means none):
+
+    "default_priority": "low"
+
+- quick-add: `buy milk` is low; `buy milk !high` is high; `buy milk !none` really has no priority
+- full form: the field is pre-filled with the default; clear it to use the default, or type `none` for none
+- only new tasks are affected; existing tasks and edits are never changed
+- the `↓` marker is hidden for the default level (it would be on every row), and tasks with no priority sort
+  as if they had the default
+
 ## Quick add
 
 `a` opens a one-line prompt with a live preview; enter adds, tab opens the full form pre-filled.
