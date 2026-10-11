@@ -18,7 +18,7 @@ func TestBuildTree(t *testing.T) {
 		{UID: "loopB", Parent: "loopA", Status: "NEEDS-ACTION"},
 	}
 	var got []string
-	for _, r := range buildTree(tasks, 0) {
+	for _, r := range buildTree(tasks) {
 		got = append(got, r.task.UID)
 	}
 	want := []string{"p", "kid", "later", "orphan"}

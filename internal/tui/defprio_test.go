@@ -137,42 +137,55 @@ func TestEditingDoesNotApplyDefault(t *testing.T) {
 	}
 }
 
-func TestDefaultPriorityDisplayAndSort(t *testing.T) {
+func TestNoPriorityMarkerAndSort(t *testing.T) {
 	mk := func(uid string, prio int) caldav.Task {
 		return caldav.Task{UID: uid, Summary: uid, Priority: prio, Status: "NEEDS-ACTION"}
 	}
-	tasks := []caldav.Task{mk("b-none", 0), mk("a-low", 9), mk("c-med", 5), mk("d-high", 1)}
-
-	order := func(def int) string {
-		var s []string
-		for _, r := range buildTree(tasks, def) {
-			s = append(s, r.task.UID)
-		}
-		return strings.Join(s, ",")
+	// no priority always sorts last, below low
+	var got []string
+	for _, r := range buildTree([]caldav.Task{mk("a-none", 0), mk("b-low", 9), mk("c-med", 5), mk("d-high", 1)}) {
+		got = append(got, r.task.UID)
 	}
-	// default low: unprioritized tasks rank with low ones (alphabetical among equals)
-	if got := order(9); got != "d-high,c-med,a-low,b-none" {
-		t.Errorf("default low order = %s", got)
-	}
-	// no default: unprioritized sinks below even low
-	if got := order(0); got != "d-high,c-med,a-low,b-none" {
-		t.Errorf("no default order = %s", got)
-	}
-	mixed := []caldav.Task{mk("a-none", 0), mk("b-low", 9)}
-	if r := buildTree(mixed, 9); r[0].task.UID != "a-none" {
-		t.Errorf("with a low default, none and low should tie: %v", r[0].task.UID)
-	}
-	if r := buildTree(mixed, 0); r[0].task.UID != "b-low" {
-		t.Errorf("with no default, low should beat none: %v", r[0].task.UID)
+	if want := "d-high,c-med,b-low,a-none"; strings.Join(got, ",") != want {
+		t.Errorf("order = %v, want %s", got, want)
 	}
 
-	// the ↓ marker is hidden for the default level, shown otherwise
+	render := func(def, prio int) string {
+		m := Model{w: 100, defaultPrio: def}
+		return m.renderRow(row{task: mk("x", prio)})
+	}
+	// default low: low is the baseline (blank), none stands out
+	if strings.Contains(render(9, 9), "↓") || strings.Contains(render(9, 9), "–") {
+		t.Error("default-level tasks should carry no marker")
+	}
+	if !strings.Contains(render(9, 0), "–") {
+		t.Error("no-priority tasks should be marked when a default is set")
+	}
+	if !strings.Contains(render(9, 5), "!") || !strings.Contains(render(9, 1), "!!") {
+		t.Error("medium/high markers lost")
+	}
+	// no default configured: no priority is normal, low keeps its arrow
+	if strings.Contains(render(0, 0), "–") {
+		t.Error("without a default, no-priority should not be marked")
+	}
+	if !strings.Contains(render(0, 9), "↓") {
+		t.Error("low should show ↓ when low is not the default")
+	}
+}
+
+func TestDetailShowsPriority(t *testing.T) {
 	m := Model{w: 100, defaultPrio: 9}
-	if strings.Contains(m.renderRow(row{task: mk("x", 9)}), "↓") {
-		t.Error("default-level tasks should not carry a marker")
+	m.rows = []row{{task: caldav.Task{UID: "x", Summary: "x", Status: "NEEDS-ACTION"}}}
+	if !strings.Contains(m.renderDetail(), "no priority") {
+		t.Error("detail should say no priority")
+	}
+	m.rows[0].task.Priority = 1
+	if !strings.Contains(m.renderDetail(), "high priority") {
+		t.Error("detail should show the priority")
 	}
 	m.defaultPrio = 0
-	if !strings.Contains(m.renderRow(row{task: mk("x", 9)}), "↓") {
-		t.Error("low tasks should show ↓ when low is not the default")
+	m.rows[0].task.Priority = 0
+	if strings.Contains(m.renderDetail(), "priority") {
+		t.Error("without a default, don't mention a missing priority")
 	}
 }

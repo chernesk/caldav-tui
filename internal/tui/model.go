@@ -137,7 +137,7 @@ func (m *Model) reload() {
 		}
 		keep = append(keep, t)
 	}
-	m.rows = buildTree(keep, m.defaultPrio)
+	m.rows = buildTree(keep)
 	if m.cursor >= len(m.rows) {
 		m.cursor = max(0, len(m.rows)-1)
 	}
@@ -145,7 +145,7 @@ func (m *Model) reload() {
 }
 
 // less orders open tasks first, then by due date (undated last), priority, summary.
-func less(a, b caldav.Task, def int) bool {
+func less(a, b caldav.Task) bool {
 	if a.Done() != b.Done() {
 		return !a.Done()
 	}
@@ -155,19 +155,15 @@ func less(a, b caldav.Task, def int) bool {
 	if !a.Due.Equal(b.Due) {
 		return a.Due.Before(b.Due)
 	}
-	pa, pb := prioRank(a.Priority, def), prioRank(b.Priority, def)
+	pa, pb := prioRank(a.Priority), prioRank(b.Priority)
 	if pa != pb {
 		return pa < pb
 	}
 	return strings.ToLower(a.Summary) < strings.ToLower(b.Summary)
 }
 
-// prioRank orders priorities (1 = highest). Tasks with no priority rank as the
-// configured default, so old unprioritized tasks mix with new default-priority ones.
-func prioRank(p, def int) int {
-	if p == 0 {
-		p = def
-	}
+// prioRank orders priorities (1 = highest); no priority sorts last.
+func prioRank(p int) int {
 	if p == 0 {
 		return 10
 	}
@@ -176,7 +172,7 @@ func prioRank(p, def int) int {
 
 // buildTree orders tasks with subtasks nested under their RELATED-TO parent.
 // A task whose parent isn't in the visible set is shown as a root.
-func buildTree(tasks []caldav.Task, def int) []row {
+func buildTree(tasks []caldav.Task) []row {
 	byUID := map[string]bool{}
 	for _, t := range tasks {
 		byUID[t.UID] = true
@@ -190,7 +186,7 @@ func buildTree(tasks []caldav.Task, def int) []row {
 			roots = append(roots, t)
 		}
 	}
-	sort.SliceStable(roots, func(i, j int) bool { return less(roots[i], roots[j], def) })
+	sort.SliceStable(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
 	var out []row
 	seen := map[string]bool{}
 	var walk func(t caldav.Task, depth int)
@@ -201,7 +197,7 @@ func buildTree(tasks []caldav.Task, def int) []row {
 		seen[t.UID] = true
 		out = append(out, row{t, depth})
 		c := kids[t.UID]
-		sort.SliceStable(c, func(i, j int) bool { return less(c[i], c[j], def) })
+		sort.SliceStable(c, func(i, j int) bool { return less(c[i], c[j]) })
 		for _, k := range c {
 			walk(k, depth+1)
 		}
@@ -536,6 +532,8 @@ func (m Model) renderRow(r row) string {
 		prio = prioMed.Render("! ")
 	case t.Priority >= 6 && t.Priority != m.defaultPrio:
 		prio = prioLow.Render("↓ ") // the default level is the baseline: no marker
+	case t.Priority == 0 && m.defaultPrio != 0:
+		prio = dim.Render("– ") // with a default set, "no priority" is the odd one out
 	}
 	due := dueLabel(t)
 	dueW := 14
@@ -578,6 +576,12 @@ func (m Model) renderDetail() string {
 		}
 		if t.RRule != "" {
 			meta = append(meta, "repeats "+t.RRule)
+		}
+		switch {
+		case t.Priority != 0:
+			meta = append(meta, PriorityText(t.Priority)+" priority")
+		case m.defaultPrio != 0:
+			meta = append(meta, "no priority")
 		}
 		meta = append(meta, strings.ToLower(t.Status))
 		lines[1] = dim.Render(strings.Join(meta, " · "))

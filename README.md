@@ -42,8 +42,8 @@ unset means none):
 - quick-add: `buy milk` is low; `buy milk !high` is high; `buy milk !none` really has no priority
 - full form: the field is pre-filled with the default; clear it to use the default, or type `none` for none
 - only new tasks are affected; existing tasks and edits are never changed
-- the `↓` marker is hidden for the default level (it would be on every row), and tasks with no priority sort
-  as if they had the default
+- the `↓` marker is hidden for the default level (it would be on every row); tasks with no priority get a dim
+  `–` instead so they stand out, sort below low ones, and say "no priority" in the detail pane
 
 ## Quick add
 
