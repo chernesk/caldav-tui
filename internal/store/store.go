@@ -42,6 +42,7 @@ CREATE INDEX IF NOT EXISTS tasks_calendar ON tasks(calendar);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- Reminder state survives restarts (and schema bumps: the drop above skips these).
 CREATE TABLE IF NOT EXISTS notified (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS collapsed (uid TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS snoozes (uid TEXT PRIMARY KEY, until INTEGER NOT NULL);
 `
 
@@ -283,6 +284,33 @@ func (s *Store) MarkNotified(key string, at time.Time) error {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM notified WHERE at < ?`, at.AddDate(0, 0, -30).Unix())
+	return err
+}
+
+// Collapsed returns the UIDs of parent tasks whose subtasks are folded away.
+func (s *Store) Collapsed() map[string]bool {
+	out := map[string]bool{}
+	rows, err := s.db.Query(`SELECT uid FROM collapsed`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil {
+			out[u] = true
+		}
+	}
+	return out
+}
+
+// SetCollapsed remembers (or forgets) that a parent's subtasks are folded.
+func (s *Store) SetCollapsed(uid string, on bool) error {
+	if on {
+		_, err := s.db.Exec(`INSERT OR IGNORE INTO collapsed(uid) VALUES(?)`, uid)
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM collapsed WHERE uid=?`, uid)
 	return err
 }
 

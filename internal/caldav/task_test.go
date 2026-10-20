@@ -55,3 +55,18 @@ func TestParseTaskQuotesETag(t *testing.T) {
 		t.Errorf("cached ETag %q would be sent unquoted in If-Match", task.ETag)
 	}
 }
+
+// How Tasks.org (via DAVx5) links a subtask, taken from a real task on the account.
+func TestParseTasksOrgSubtask(t *testing.T) {
+	child := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:kid\r\nSUMMARY:Blanket\r\nRELATED-TO;RELTYPE=PARENT:mom\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+	cal, _ := ical.NewDecoder(strings.NewReader(child)).Decode()
+	if task, _ := ParseTask("/c/kid.ics", "e", "/c/", cal); task.Parent != "mom" {
+		t.Errorf("parent = %q", task.Parent)
+	}
+	// a link in the other direction (this task lists its CHILD) must not be mistaken for a parent
+	mom := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:mom\r\nSUMMARY:Walmart\r\nRELATED-TO;RELTYPE=CHILD:kid\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+	cal, _ = ical.NewDecoder(strings.NewReader(mom)).Decode()
+	if task, _ := ParseTask("/c/mom.ics", "e", "/c/", cal); task.Parent != "" {
+		t.Errorf("CHILD link read as parent: %q", task.Parent)
+	}
+}

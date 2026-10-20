@@ -143,7 +143,7 @@ func TestNoPriorityMarkerAndSort(t *testing.T) {
 	}
 	// no priority always sorts last, below low
 	var got []string
-	for _, r := range buildTree([]caldav.Task{mk("a-none", 0), mk("b-low", 9), mk("c-med", 5), mk("d-high", 1)}) {
+	for _, r := range buildTree([]caldav.Task{mk("a-none", 0), mk("b-low", 9), mk("c-med", 5), mk("d-high", 1)}, nil) {
 		got = append(got, r.task.UID)
 	}
 	if want := "d-high,c-med,b-low,a-none"; strings.Join(got, ",") != want {

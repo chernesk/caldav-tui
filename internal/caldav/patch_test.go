@@ -104,7 +104,7 @@ func TestNewRaw(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := lines(out)
-	for k, v := range map[string]string{"SUMMARY": "SUMMARY:Hello", "UID": "UID:abc", "RELATED-TO": "RELATED-TO:parent1",
+	for k, v := range map[string]string{"SUMMARY": "SUMMARY:Hello", "UID": "UID:abc", "RELATED-TO": "RELATED-TO;RELTYPE=PARENT:parent1",
 		"DUE": "DUE;VALUE=DATE:20261002", "PRIORITY": "PRIORITY:5", "RRULE": "RRULE:FREQ=WEEKLY", "STATUS": "STATUS:NEEDS-ACTION"} {
 		if l[k] != v {
 			t.Errorf("%s = %q, want %q", k, l[k], v)

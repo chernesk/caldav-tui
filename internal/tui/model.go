@@ -33,9 +33,14 @@ var (
 )
 
 type row struct {
-	task  caldav.Task
-	depth int
+	task      caldav.Task
+	depth     int
+	prefix    string // tree guide, e.g. "│ ├ "
+	collapsed bool   // has subtasks that are folded away
 }
+
+// progress counts a parent's direct subtasks, including completed or hidden ones.
+type progress struct{ done, total int }
 
 type mode int
 
@@ -50,11 +55,13 @@ type Model struct {
 	mode        mode
 	form        *form
 	quick       *quickBox
-	confirm     caldav.Task     // task pending delete confirmation
-	flash       string          // one-line result of the last action, cleared on next key
-	busy        int             // writes in flight
-	defaultPrio int             // priority given to new tasks that don't specify one (0 = none)
-	pending     map[string]bool // href -> change applied locally, not yet confirmed by the server
+	confirm     caldav.Task         // task pending delete confirmation
+	flash       string              // one-line result of the last action, cleared on next key
+	busy        int                 // writes in flight
+	defaultPrio int                 // priority given to new tasks that don't specify one (0 = none)
+	collapsed   map[string]bool     // parent UID -> subtasks folded away (persisted)
+	progress    map[string]progress // parent UID -> direct subtask counts
+	pending     map[string]bool     // href -> change applied locally, not yet confirmed by the server
 
 	notifier Notifier // nil = reminders off
 	rem      ReminderConfig
@@ -80,7 +87,7 @@ type Model struct {
 }
 
 func New(cl *caldav.Client, st *store.Store) Model {
-	m := Model{cl: cl, st: st, calIdx: -1, syncing: true, pending: map[string]bool{}}
+	m := Model{cl: cl, st: st, calIdx: -1, syncing: true, pending: map[string]bool{}, collapsed: st.Collapsed(), progress: map[string]progress{}}
 	m.reload()
 	return m
 }
@@ -125,6 +132,17 @@ func (m *Model) reload() {
 		m.err = err
 		return
 	}
+	m.progress = map[string]progress{}
+	for _, t := range tasks {
+		if t.Parent != "" && t.Parent != t.UID {
+			p := m.progress[t.Parent]
+			p.total++
+			if t.Done() {
+				p.done++
+			}
+			m.progress[t.Parent] = p
+		}
+	}
 	var keep []caldav.Task
 	m.hidden = 0
 	for _, t := range tasks {
@@ -137,7 +155,7 @@ func (m *Model) reload() {
 		}
 		keep = append(keep, t)
 	}
-	m.rows = buildTree(keep)
+	m.rows = buildTree(keep, m.collapsed)
 	if m.cursor >= len(m.rows) {
 		m.cursor = max(0, len(m.rows)-1)
 	}
@@ -172,7 +190,7 @@ func prioRank(p int) int {
 
 // buildTree orders tasks with subtasks nested under their RELATED-TO parent.
 // A task whose parent isn't in the visible set is shown as a root.
-func buildTree(tasks []caldav.Task) []row {
+func buildTree(tasks []caldav.Task, collapsed map[string]bool) []row {
 	byUID := map[string]bool{}
 	for _, t := range tasks {
 		byUID[t.UID] = true
@@ -189,21 +207,30 @@ func buildTree(tasks []caldav.Task) []row {
 	sort.SliceStable(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
 	var out []row
 	seen := map[string]bool{}
-	var walk func(t caldav.Task, depth int)
-	walk = func(t caldav.Task, depth int) {
+	// prefix is this row's guide (├ / └), childPrefix the guide stem for its children
+	var walk func(t caldav.Task, depth int, prefix, childPrefix string)
+	walk = func(t caldav.Task, depth int, prefix, childPrefix string) {
 		if seen[t.UID] {
 			return // guards against parent cycles
 		}
 		seen[t.UID] = true
-		out = append(out, row{t, depth})
 		c := kids[t.UID]
+		fold := collapsed[t.UID] && len(c) > 0
+		out = append(out, row{task: t, depth: depth, prefix: prefix, collapsed: fold})
+		if fold {
+			return
+		}
 		sort.SliceStable(c, func(i, j int) bool { return less(c[i], c[j]) })
-		for _, k := range c {
-			walk(k, depth+1)
+		for i, k := range c {
+			if i == len(c)-1 {
+				walk(k, depth+1, childPrefix+"└ ", childPrefix+"  ")
+			} else {
+				walk(k, depth+1, childPrefix+"├ ", childPrefix+"│ ")
+			}
 		}
 	}
 	for _, r := range roots {
-		walk(r, 0)
+		walk(r, 0, "", "")
 	}
 	return out
 }
@@ -302,6 +329,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncing = true
 			return m, m.sync()
 		}
+	case "z":
+		if t, ok := m.current(); ok && m.progress[t.UID].total > 0 {
+			m.setFold(t.UID, !m.collapsed[t.UID])
+		}
+	case "h", "left":
+		m.fold(true)
+	case "l", "right":
+		m.fold(false)
 	case "x", " ":
 		if t, ok := m.current(); ok {
 			return m.startToggle(t)
@@ -397,6 +432,35 @@ func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startSave(f, e)
 	}
 	return m, cmd
+}
+
+// fold collapses (h) or expands (l) the selected parent. Like a file tree, h on
+// something that can't fold further jumps up to its parent.
+func (m *Model) fold(collapse bool) {
+	t, ok := m.current()
+	if !ok {
+		return
+	}
+	hasKids := m.progress[t.UID].total > 0
+	switch {
+	case collapse && hasKids && !m.collapsed[t.UID]:
+		m.setFold(t.UID, true)
+	case collapse && t.Parent != "":
+		m.selectUID(t.Parent)
+	case !collapse && hasKids && m.collapsed[t.UID]:
+		m.setFold(t.UID, false)
+	}
+}
+
+func (m *Model) setFold(uid string, on bool) {
+	if on {
+		m.collapsed[uid] = true
+	} else {
+		delete(m.collapsed, uid)
+	}
+	_ = m.st.SetCollapsed(uid, on)
+	m.reload()
+	m.selectUID(uid)
 }
 
 // selectUID moves the cursor to a task if it's visible.
@@ -503,7 +567,11 @@ func (m Model) View() string {
 	keys := "x done · a add · e edit · d del · s unstarted · q quit"
 	switch {
 	case m.mode == modeConfirmDelete:
-		b.WriteString(errStyle.Render(truncate("Delete “"+m.confirm.Summary+"”? (y/N)", m.w)))
+		q := "Delete “" + m.confirm.Summary + "”? (y/N)"
+		if n := m.progress[m.confirm.UID].total; n > 0 {
+			q = fmt.Sprintf("Delete “%s”? Its %d subtask(s) are NOT deleted; they stay as separate tasks. (y/N)", truncate(m.confirm.Summary, 30), n)
+		}
+		b.WriteString(errStyle.Render(truncate(q, m.w)))
 	case m.flash != "":
 		b.WriteString(today.Render(truncate(m.flash, m.w)))
 	default:
@@ -546,15 +614,21 @@ func (m Model) renderRow(r row) string {
 	case sameDay(t.Due, time.Now()):
 		dueCol = today.Render(dueCol)
 	}
-	indent := strings.Repeat("  ", r.depth)
+	indent := dim.Render(r.prefix)
 	sum := t.Summary
 	if t.RRule != "" {
 		sum += " ↻"
 	}
+	if p := m.progress[t.UID]; p.total > 0 {
+		sum += fmt.Sprintf(" (%d/%d)", p.done, p.total)
+		if r.collapsed {
+			sum += " ▸"
+		}
+	}
 	if m.pending[t.Href] {
 		sum += " ⟳"
 	}
-	room := m.w - dueW - 2 - 3 - 1 - 2 - 1 - len(indent)
+	room := m.w - dueW - 2 - 3 - 1 - 2 - 1 - lipgloss.Width(indent)
 	sum = truncate(sum, max(10, room))
 	if t.Done() {
 		sum = dim.Render(sum)
@@ -576,6 +650,9 @@ func (m Model) renderDetail() string {
 		}
 		if t.RRule != "" {
 			meta = append(meta, "repeats "+t.RRule)
+		}
+		if p := m.progress[t.UID]; p.total > 0 {
+			meta = append(meta, fmt.Sprintf("%d of %d subtasks done", p.done, p.total))
 		}
 		switch {
 		case t.Priority != 0:

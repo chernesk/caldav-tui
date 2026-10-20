@@ -280,7 +280,7 @@ func TestFlowSubtask(t *testing.T) {
 	if len(r.m.rows) != 2 || r.m.rows[1].depth != 1 || r.m.rows[1].task.Summary != "Child" {
 		t.Fatalf("subtask not nested under parent: %+v", r.m.rows)
 	}
-	if !strings.Contains(r.server(r.m.rows[1].task.UID), "RELATED-TO:par") {
+	if !strings.Contains(r.server(r.m.rows[1].task.UID), "RELATED-TO;RELTYPE=PARENT:par") {
 		t.Error("RELATED-TO missing")
 	}
 }

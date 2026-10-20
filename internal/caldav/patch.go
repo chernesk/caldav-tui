@@ -341,7 +341,7 @@ func NewRaw(uid, parent string, e Edit, now time.Time) (string, error) {
 		"BEGIN:VTODO", "UID:" + uid, "CREATED:" + stamp(now), "STATUS:NEEDS-ACTION",
 	}
 	if parent != "" {
-		lines = append(lines, "RELATED-TO:"+parent)
+		lines = append(lines, "RELATED-TO;RELTYPE=PARENT:"+parent) // same form Tasks.org writes
 	}
 	lines = append(lines, "END:VTODO", "END:VCALENDAR")
 	d, err := parseDoc(strings.Join(lines, "\r\n"))

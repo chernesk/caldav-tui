@@ -22,7 +22,7 @@ Create `~/.config/caldav-tui/config.json` (use a Fastmail app password with CalD
 
 ## Keys
 
-List: j/k move · ctrl-d/u half page · g/G top/bottom · tab/shift-tab calendar · c show completed ·
+List: h/l fold/unfold a parent (h on a subtask jumps to its parent) · z toggle fold · j/k move · ctrl-d/u half page · g/G top/bottom · tab/shift-tab calendar · c show completed ·
 s show unstarted (start date in the future; hidden by default) · r refresh · q quit
 
 Actions: x or space complete/reopen (recurring tasks advance to the next occurrence) · a quick-add ·
@@ -31,6 +31,16 @@ A quick-add a subtask under the selected task · e or enter edit · d delete (as
 Form: tab/shift-tab or up/down between fields · enter or ctrl-s save · esc cancel. Dates take
 `today`, `tomorrow 2pm`, `fri`, `+3d`, `oct 5`, `2026-10-05 14:30`; repeat takes `daily`,
 `weekly mon,wed`, `every 2 weeks`, `monthly`, `weekdays`, or a raw `FREQ=...` rule.
+
+## Nested tasks
+
+Subtasks are linked the way Tasks.org writes them: `RELATED-TO;RELTYPE=PARENT:<parent UID>` on the child, so
+they nest identically on your phone. They show under their parent with tree guides, to any depth, and a parent
+shows how many are done: `Walmart (1/2)` (completed subtasks count even while hidden). `A` adds a subtask under
+the selected task; `h`/`l`/`z` fold and unfold (remembered between runs; a folded parent shows `▸`).
+
+Deleting a parent never deletes its subtasks; they stay as separate tasks, and the delete prompt says so.
+Moving a task to a different parent isn't supported yet.
 
 ## Default priority
 
