@@ -19,6 +19,10 @@ Create `~/.config/caldav-tui/config.json` (use a Fastmail app password with CalD
 
     go build -o caldav-tui . && ./caldav-tui
     ./caldav-tui sync      # one-shot sync, prints task counts per calendar
+    ./caldav-tui version   # also shown at the end of the footer
+
+The version comes from git: release with `git tag vX.Y.Z` and build. Builds with uncommitted changes or past
+the last tag show a `+dirty` / pseudo-version suffix.
 
 ## Keys
 

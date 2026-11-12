@@ -14,6 +14,7 @@ import (
 	"github.com/chernesk/caldav-tui/internal/notify"
 	"github.com/chernesk/caldav-tui/internal/store"
 	"github.com/chernesk/caldav-tui/internal/tui"
+	"github.com/chernesk/caldav-tui/internal/version"
 )
 
 func main() {
@@ -59,6 +60,10 @@ func notifyTest() error {
 }
 
 func run() error {
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+		fmt.Println("caldav-tui " + version.String())
+		return nil
+	}
 	if len(os.Args) > 1 && os.Args[1] == "notify-test" {
 		return notifyTest()
 	}

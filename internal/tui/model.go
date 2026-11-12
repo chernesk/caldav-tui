@@ -17,6 +17,7 @@ import (
 	"github.com/chernesk/caldav-tui/internal/caldav"
 	"github.com/chernesk/caldav-tui/internal/notify"
 	"github.com/chernesk/caldav-tui/internal/store"
+	"github.com/chernesk/caldav-tui/internal/version"
 )
 
 var (
@@ -564,7 +565,7 @@ func (m Model) View() string {
 	if m.busy > 0 {
 		status += " · saving…"
 	}
-	keys := "x done · a add · e edit · d del · s unstarted · q quit"
+	keys := "x done · a add · e edit · d del · s unstarted · q quit · v" + version.String()
 	switch {
 	case m.mode == modeConfirmDelete:
 		q := "Delete “" + m.confirm.Summary + "”? (y/N)"
