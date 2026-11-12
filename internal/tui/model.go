@@ -661,6 +661,9 @@ func (m Model) renderDetail() string {
 			meta = append(meta, "no priority")
 		}
 		meta = append(meta, strings.ToLower(t.Status))
+		if al := t.Alarms(); len(al) > 0 {
+			meta = append(meta, "alarm "+strings.Join(al, ", "))
+		}
 		lines[1] = dim.Render(strings.Join(meta, " · "))
 		notes := strings.Split(strings.TrimSpace(t.Notes), "\n")
 		for i := 0; i < detailLines-2 && i < len(notes); i++ {

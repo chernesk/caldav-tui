@@ -111,6 +111,10 @@ task (alarms, categories, other clients' X- properties) is carried through untou
 changed since the last sync you get a "changed on the server" message and an automatic refresh instead of
 a lost update.
 
+Alarms are shown read-only in the detail line ("alarm at due, 1 day after due"). Only their timing is
+available: clients such as Tasks.org keep the alert mode (once / repeating / insistent) locally, so it never
+reaches the server.
+
 ## Status
 
 Read, complete/reopen, add, subtask, edit, delete and reminders work. Next (only if needed): a persistent offline write queue, so changes made with no network survive and are
