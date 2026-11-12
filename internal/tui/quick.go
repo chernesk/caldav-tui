@@ -19,6 +19,7 @@ type Quick struct {
 	Priority int
 	PrioSet  bool // priority was given explicitly (so "!none" can override a default)
 	RRule    string
+	Alarms   []caldav.Alarm
 	Notes    string
 }
 
@@ -37,6 +38,7 @@ const maxPhrase = 5 // longest run of words tried as one date/repeat phrase
 //	!high !med !low !1..!9 !!!   priority
 //	every week / every 2 weeks / every mon,wed / daily / weekdays   repeat
 //	due:fri 2pm   start:oct 5    explicit dates (start is hidden until then)
+//	alarm:10 min before   alarm:at due   alarm:1 day after due   reminders (repeatable)
 //	... tomorrow 2pm             a date/time at the end of the title is the due date
 //	... // some notes            everything after " // " is the notes
 //
@@ -102,6 +104,33 @@ func QuickParse(input string, now time.Time) (Quick, error) {
 		}
 		used[i] = true
 		for k := 1; k <= n; k++ {
+			used[i+k] = true
+		}
+	}
+
+	// alarm: markers take the longest phrase that reads as an alarm
+	for i := range toks {
+		if used[i] || lit(i) || !strings.HasPrefix(low(i), "alarm:") {
+			continue
+		}
+		first := toks[i][len("alarm:"):]
+		best, bestA, found := 0, caldav.Alarm{}, false
+		for n := 0; n <= maxPhrase-1 && i+n < len(toks); n++ {
+			if n > 0 && used[i+n] {
+				break
+			}
+			phrase := strings.TrimSpace(first + " " + strings.Join(toks[i+1:i+1+n], " "))
+			if a, err := ParseAlarm(phrase); err == nil {
+				best, bestA, found = n, a, true
+			}
+		}
+		if !found {
+			return q, fmt.Errorf("can't read an alarm after \"alarm:\"")
+		}
+		if !slicesContains(q.Alarms, bestA) {
+			q.Alarms = append(q.Alarms, bestA)
+		}
+		for k := 0; k <= best; k++ {
 			used[i+k] = true
 		}
 	}
@@ -275,6 +304,9 @@ func (q Quick) Describe() string {
 	if q.RRule != "" {
 		parts = append(parts, "repeats "+RepeatText(q.RRule))
 	}
+	if len(q.Alarms) > 0 {
+		parts = append(parts, "alarm "+AlarmsText(q.Alarms))
+	}
 	if q.Notes != "" {
 		parts = append(parts, "+notes")
 	}
@@ -295,6 +327,9 @@ func (q Quick) Edit() caldav.Edit {
 	}
 	if q.RRule != "" {
 		e.RRule = &q.RRule
+	}
+	if len(q.Alarms) > 0 {
+		e.Alarms = &q.Alarms
 	}
 	if q.Notes != "" {
 		e.Notes = &q.Notes

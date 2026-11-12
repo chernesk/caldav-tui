@@ -74,6 +74,8 @@ unset means none):
 - `every week`, `every 2 weeks`, `every other week`, `every mon,wed`, `daily`, `weekdays`... set the repeat;
   with no date, the first matching day becomes the due date
 - `due:` / `start:` set dates explicitly (a start date hides the task until then)
+- `alarm:10 min before`, `alarm:at due`, `alarm:1 day after due`, `alarm:2h before start` add alarms (repeatable;
+  a bare `alarm:10m` means 10 minutes before due)
 - everything after ` // ` is the notes; `\word` keeps a word literal (`\!important`)
 
 ## Reminders
@@ -111,13 +113,15 @@ A task with a save in flight can't be edited again until it's confirmed.
 
 Every write is a conditional PUT/DELETE (`If-Match` with the task's ETag), built by patching only the
 properties the app manages (summary, notes, due, start, priority, repeat, status). Everything else on the
-task (alarms, categories, other clients' X- properties) is carried through untouched. If the server copy
+task (categories, other clients' X- properties, absolute-time alarms) is carried through untouched. If the server copy
 changed since the last sync you get a "changed on the server" message and an automatic refresh instead of
 a lost update.
 
-Alarms are shown read-only in the detail line ("alarm at due, 1 day after due"). Only their timing is
-available: clients such as Tasks.org keep the alert mode (once / repeating / insistent) locally, so it never
-reaches the server.
+Alarms show in the detail line and have an **Alarm** field in the edit form: a comma-separated list such as
+`at due, 1 day after due` or `10 min before start` (`none` clears them). Saving rewrites only the relative alarms;
+ones you leave alone are kept byte-for-byte, and absolute-time alarms are never touched. Only timing is stored on
+the server: clients such as Tasks.org keep the alert mode (once / repeating / insistent) locally, so set that
+on the phone.
 
 ## Status
 

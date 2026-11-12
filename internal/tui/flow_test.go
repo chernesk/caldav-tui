@@ -342,3 +342,52 @@ func TestFlowQuickAdd(t *testing.T) {
 		t.Error("esc should close the prompt")
 	}
 }
+
+func TestFlowAlarms(t *testing.T) {
+	r := newRig(t)
+	r.key("a")
+	r.key("pay rent fri 5pm alarm:at due alarm:1 day after due")
+	r.key("enter")
+	if r.m.mode != modeList || r.m.err != nil || len(r.m.rows) != 1 {
+		t.Fatalf("mode=%v err=%v rows=%d", r.m.mode, r.m.err, len(r.m.rows))
+	}
+	tk := r.m.rows[0].task
+	if got := strings.Join(tk.Alarms(), ", "); got != "at due, 1 day after due" {
+		t.Errorf("alarms after quick add = %q\n%s", got, r.server(tk.UID))
+	}
+	if !strings.Contains(r.server(tk.UID), "TRIGGER;RELATED=END:P1D") {
+		t.Errorf("server missing trigger:\n%s", r.server(tk.UID))
+	}
+
+	// the edit form shows them; changing the field rewrites them
+	r.cursorOn(tk.UID)
+	r.key("e")
+	if got := r.m.form.text(fAlarm); got != "at due, 1 day after due" {
+		t.Fatalf("form alarm field = %q", got)
+	}
+	r.m.form.inputs[fAlarm].SetValue("10 min before")
+	r.key("ctrl+s")
+	raw := r.server(tk.UID)
+	if !strings.Contains(raw, "TRIGGER;RELATED=END:-PT10M") || strings.Contains(raw, "P1D") {
+		t.Errorf("edit did not replace alarms:\n%s", raw)
+	}
+
+	// a bad alarm keeps the form open
+	r.cursorOn(tk.UID)
+	r.key("e")
+	r.m.form.inputs[fAlarm].SetValue("whenever")
+	r.key("ctrl+s")
+	if r.m.mode != modeForm || r.m.form.err == "" {
+		t.Errorf("bad alarm should keep form open: mode=%v", r.m.mode)
+	}
+	r.key("esc")
+
+	// clearing removes them
+	r.cursorOn(tk.UID)
+	r.key("e")
+	r.m.form.inputs[fAlarm].SetValue("")
+	r.key("ctrl+s")
+	if strings.Contains(r.server(tk.UID), "VALARM") {
+		t.Errorf("alarms not cleared:\n%s", r.server(tk.UID))
+	}
+}

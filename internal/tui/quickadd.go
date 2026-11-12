@@ -75,8 +75,9 @@ func (q *quickBox) view(now time.Time) string {
 		"  water plants every monday 9am",
 		"  pay rent by oct 1 // via the app",
 		"  plan trip start:oct 5 due:oct 20",
+		"  call dentist fri 2pm alarm:1 hour before alarm:at due",
 		"",
-		"  !high/!med/!low priority · every week/2 weeks/mon,wed · // notes · \\word keeps a word literal",
+		"  !high/!med/!low priority · every week/2 weeks/mon,wed · alarm:10 min before · // notes · \\word keeps a word literal",
 	}, "\n")))
 	b.WriteString("\n\n" + dim.Render("enter add · tab full form · esc cancel"))
 	return lipgloss.NewStyle().Padding(1, 2).Render(b.String())
@@ -100,6 +101,7 @@ func (q *quickBox) expandForm(now time.Time, w int) *form {
 	f.inputs[fStart].SetValue(FormatWhen(p.Start))
 	f.inputs[fPrio].SetValue(PriorityText(p.Priority))
 	f.inputs[fRepeat].SetValue(RepeatText(p.RRule))
+	f.inputs[fAlarm].SetValue(AlarmsText(p.Alarms))
 	f.notes.SetValue(p.Notes)
 	return f
 }

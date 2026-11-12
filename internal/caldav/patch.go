@@ -33,6 +33,7 @@ type Edit struct {
 	Start    *When // zero When clears
 	Priority *int  // 0 clears
 	RRule    *string
+	Alarms   *[]Alarm // relative alarms; empty clears them, absolute ones are kept
 }
 
 type item struct {
@@ -294,6 +295,9 @@ func (d *doc) apply(e Edit, now time.Time) {
 		} else {
 			d.set("RRULE", "RRULE:"+*e.RRule)
 		}
+	}
+	if e.Alarms != nil {
+		d.setAlarms(*e.Alarms)
 	}
 	d.matchStartToDue()
 	d.touch(now)

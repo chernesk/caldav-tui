@@ -21,11 +21,12 @@ const (
 	fStart
 	fPrio
 	fRepeat
+	fAlarm
 	fNotes
 	nFields
 )
 
-var fieldLabels = [nFields]string{"Title", "Due", "Start", "Priority", "Repeat", "Notes"}
+var fieldLabels = [nFields]string{"Title", "Due", "Start", "Priority", "Repeat", "Alarm", "Notes"}
 
 var fieldHints = [nFields]string{
 	"",
@@ -33,6 +34,7 @@ var fieldHints = [nFields]string{
 	"same formats as due; hidden from the list until this day",
 	"high, medium, low, or none for no priority",
 	"daily, weekly mon,wed, every 2 weeks, monthly, weekdays",
+	"at due, 10 min before, 1 day after due, at start; comma-separated",
 	"",
 }
 
@@ -83,6 +85,7 @@ func newForm(t *caldav.Task, parent, parentTitle, calendar string, w, defPrio in
 		}
 		f.orig[fPrio] = PriorityText(t.Priority)
 		f.orig[fRepeat] = RepeatText(t.RRule)
+		f.orig[fAlarm] = AlarmsText(t.RelativeAlarms())
 		f.orig[fNotes] = t.Notes
 	}
 	for i := range f.inputs {
@@ -213,6 +216,14 @@ func (f *form) edit(now time.Time) (caldav.Edit, error) {
 		}
 		e.RRule = &r
 	}
+	if changed(fAlarm) {
+		as, err := ParseAlarms(f.text(fAlarm))
+		if err != nil {
+			f.setFocus(fAlarm)
+			return e, err
+		}
+		e.Alarms = &as
+	}
 	if changed(fNotes) {
 		n := strings.TrimRight(f.text(fNotes), " \n\t")
 		e.Notes = &n
@@ -289,6 +300,12 @@ func (f *form) note(id fieldID, now time.Time) string {
 			return errStyle.Render(err.Error())
 		}
 		return dim.Render("→ " + r)
+	case fAlarm:
+		as, err := ParseAlarms(txt)
+		if err != nil {
+			return errStyle.Render(err.Error())
+		}
+		return dim.Render("→ " + AlarmsText(as))
 	}
 	return ""
 }
