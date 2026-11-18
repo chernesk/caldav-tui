@@ -3,6 +3,8 @@
 A terminal task manager that talks CalDAV (VTODO) directly — no vdirsyncer, no directory of `.ics` files.
 Reads come from a local SQLite cache (`~/.cache/caldav-tui/tasks.db`); sync runs in the background.
 
+Companion project: [CalDAV Tasks](https://github.com/chernesk/caldav-tasks), a Chrome extension for the same tasks.
+
 ## Setup
 
 Create `~/.config/caldav-tui/config.json` (use a Fastmail app password with CalDAV access):
@@ -127,3 +129,7 @@ on the phone.
 
 Read, complete/reopen, add, subtask, edit, delete and reminders work. Next (only if needed): a persistent offline write queue, so changes made with no network survive and are
 sent later instead of being rolled back.
+
+## License
+
+[MIT](LICENSE)
